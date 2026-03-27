@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PulsePro MIDI Sequencer</title>
+    <link rel="stylesheet" href="styles.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "spessasynth_core": "https://cdn.jsdelivr.net/npm/spessasynth_core@4.2.1/dist/index.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="toolbar">
+        <div class="toolbar-left">
+            <div class="toolbar-group">
+                <div class="dropdown">
+                    <button class="dropbtn" id="btn-file-menu">File</button>
+                    <div class="dropdown-content" id="file-dropdown">
+                        <button id="btn-clear-all" title="Create new project">New</button>
+                        <div class="menu-separator"></div>
+                        <button id="btn-song-library" title="Open saved song">Open…</button>
+                        <div class="menu-submenu" id="menu-open-recent-wrap">
+                            <button type="button" class="menu-submenu-label" id="btn-open-recent" title="Open a recently opened library song" aria-haspopup="true" aria-expanded="false">
+                                Open recent <span class="menu-submenu-arrow" aria-hidden="true">▶</span>
+                            </button>
+                            <div class="menu-submenu-panel" id="open-recent-panel" role="menu" aria-label="Recent songs"></div>
+                        </div>
+                        <button id="btn-import-midi" title="Import MIDI file">Import…</button>
+                        <div class="menu-separator"></div>
+                        <button id="btn-save-local" title="Save to browser">Save</button>
+                        <button id="btn-save-as-local" title="Save as new song in browser">Save As…</button>
+                        <button id="btn-export-midi" title="Export MIDI file">Export…</button>
+                        <div class="menu-separator"></div>
+                        <button id="btn-theme-menu" title="Toggle Light/Dark Mode">
+                            <span class="menu-check" id="theme-check">✓</span> Dark Mode
+                        </button>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="dropbtn" id="btn-edit-menu">Edit</button>
+                    <div class="dropdown-content" id="edit-dropdown">
+                        <button type="button" id="btn-edit-undo" title="Undo (Ctrl+Z)"><span class="menu-action-text">Undo</span> <span class="menu-shortcut">Ctrl+Z</span></button>
+                        <button type="button" id="btn-edit-redo" title="Redo (Ctrl+Y)"><span class="menu-action-text">Redo</span> <span class="menu-shortcut">Ctrl+Y</span></button>
+                        <div class="menu-separator"></div>
+                        <button id="btn-edit-copy" title="Copy (Ctrl+C)">Copy <span class="menu-shortcut">Ctrl+C</span></button>
+                        <button id="btn-edit-paste" title="Paste (Ctrl+V)">Paste <span class="menu-shortcut">Ctrl+V</span></button>
+                        <button id="btn-edit-select-all" title="Select All (Ctrl+A)">Select All <span class="menu-shortcut">Ctrl+A</span></button>
+                        <div class="menu-separator"></div>
+                        <button id="btn-edit-delete" title="Delete (Del)">Delete <span class="menu-shortcut">Del</span></button>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="dropbtn" type="button" id="btn-insert-menu">Insert</button>
+                    <div class="dropdown-content" id="insert-dropdown">
+                        <button type="button" id="btn-insert-bpm">New BPM…</button>
+                        <button type="button" id="btn-insert-timesig">New Time Signature…</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="toolbar-center-wrap">
+            <div class="toolbar-center">
+            <div class="toolbar-group playback-controls">
+                <button type="button" id="btn-play" class="playback-icon-btn" title="Play (Space)"><img class="ui-icon playback-icon-img" src="Icons/Play.png" alt="" /></button>
+                <button type="button" id="btn-pause" class="playback-icon-btn" title="Pause (Space)"><img class="ui-icon playback-icon-img" src="Icons/Pause.png" alt="" /></button>
+                <button type="button" id="btn-stop" class="playback-icon-btn" title="Stop"><img class="ui-icon playback-icon-img" src="Icons/Stop.png" alt="" /></button>
+                <button type="button" id="btn-repeat" class="playback-icon-btn toggle-btn" title="Repeat"><img class="ui-icon playback-icon-img" src="Icons/Repeat.png" alt="" /></button>
+            </div>
+            <div class="toolbar-group playback-time-group">
+                <button type="button" id="btn-time-format" class="time-format-btn" title="Switch between M:S and measure.beat">M:S</button>
+                <span class="playback-time-row">
+                    <input type="text" id="playback-time-current" class="playback-time-input" title="Position — type a value and press Enter to seek" inputmode="decimal" autocomplete="off" spellcheck="false" />
+                    <span class="playback-time-sep" aria-hidden="true">/</span>
+                    <span id="playback-time-max" class="playback-time-max">0:00</span>
+                </span>
+            </div>
+            <div class="toolbar-group tool-select">
+                <button id="tool-cursor" class="tool-btn active" title="Cursor (1/V)"><img class="ui-icon tool-icon-img tool-cursor-icon" src="Icons/MousePointer.png" alt="" /></button>
+                <button id="tool-pencil" class="tool-btn" title="Pencil (2/P)"><img class="ui-icon tool-icon-img" src="Icons/Edit.png" alt="" /></button>
+                <button id="tool-eraser" class="tool-btn" title="Eraser (3/E)"><img class="ui-icon tool-icon-img" src="Icons/Eraser.png" alt="" /></button>
+            </div>
+            </div>
+        </div>
+        <div class="toolbar-right">
+            <div class="toolbar-group">
+                <label>BPM: <input type="number" id="bpm" value="120" min="20" max="999"></label>
+                <label class="toolbar-snap-label" title="Snap notes and automation to the grid; None = free placement (grid still shows 16ths)">Snap:
+                    <select id="grid-snap">
+                        <option value="0">1/4</option>
+                        <option value="1">1/8</option>
+                        <option value="2" selected>1/16</option>
+                        <option value="3">1/32</option>
+                        <option value="4">1/64</option>
+                        <option value="5">1/128</option>
+                        <option value="none">None</option>
+                    </select>
+                </label>
+            </div>
+            <div class="toolbar-group">
+                <label>Time Sig:
+                    <select id="timesig-num">
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4" selected>4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                    </select>
+                    /
+                    <select id="timesig-den">
+                        <option value="4" selected>4</option>
+                        <option value="8">8</option>
+                    </select>
+                </label>
+            </div>
+            <div class="toolbar-group">
+                <label>SoundFont:
+                    <select id="soundfont-select">
+                        <option value="">Loading…</option>
+                    </select>
+                </label>
+                <span id="sf-loading-indicator" style="display:none; color:#e94560;">Loading…</span>
+            </div>
+        </div>
+    </div>
+    <div id="main-container">
+        <div id="channel-list">
+            <div id="channel-list-conductor" class="channel-list-conductor hidden" aria-label="Conductor"></div>
+            <div id="channel-list-header">
+                <span class="ch-col ch-name-col">Title</span>
+                <span class="ch-col ch-chan-col" title="MIDI Channel">Ch</span>
+                <span class="ch-col ch-instr-col" title="Instrument"><img class="ui-icon ch-header-icon" src="Icons/Instrument.png" alt="" /></span>
+                <span class="ch-col ch-check-col" title="Show/Hide"><img class="ui-icon ch-header-icon" src="Icons/Hide.png" alt="" /></span>
+                <span class="ch-col ch-check-col" title="Lock"><img class="ui-icon ch-header-icon" src="Icons/Lock.png" alt="" /></span>
+                <span class="ch-col ch-check-col" title="Mute"><img class="ui-icon ch-header-icon" src="Icons/Mute.png" alt="" /></span>
+                <span class="ch-col ch-check-col" title="Solo"><img class="ui-icon ch-header-icon" src="Icons/Solo.png" alt="" /></span>
+            </div>
+            <div id="channel-list-rows"></div>
+        <div id="automation-editor-panel">
+            <div id="automation-editor-toolbar">
+                <button type="button" id="ae-toggle-expand" class="ae-expand-btn" title="Expand automation editor below piano roll">⤢</button>
+                <button type="button" id="ae-tool-line" class="ae-tool-btn active" title="Line tool: click start and end points">📏</button>
+                <button type="button" id="ae-tool-freehand" class="ae-tool-btn" title="Freehand draw"><img class="ui-icon ae-tool-icon" src="Icons/Edit.png" alt="" /></button>
+                <button type="button" id="ae-tool-curve" class="ae-tool-btn" title="Curve: click start, end, then control point">∿</button>
+                <button type="button" id="ae-tool-wave-sine" class="ae-tool-btn" title="Sine: start → end → X = cycles (canvas left=1, right=max), Y = amplitude → click">~</button>
+                <button type="button" id="ae-tool-wave-square" class="ae-tool-btn" title="Square: same; sparse points (edges only)">▢</button>
+                <button type="button" id="ae-tool-wave-saw" class="ae-tool-btn" title="Saw: start → end → X = cycles, Y = amplitude → click">⋀</button>
+                <button type="button" id="ae-tool-wave-triangle" class="ae-tool-btn" title="Triangle: start → end → X = cycles, Y = amplitude → click">△</button>
+                <button type="button" id="ae-tool-erase" class="ae-tool-btn" title="Erase: remove points in range"><img class="ui-icon ae-tool-icon" src="Icons/Eraser.png" alt="" /></button>
+                <button type="button" id="ae-tool-select" class="ae-tool-btn" title="Select range (uses selected notes or drag); Ctrl+C / Ctrl+V copy &amp; paste automation">⎕</button>
+                <span id="ae-value-display" title="Current value"></span>
+            </div>
+            <div id="automation-overlay-tabs" class="ae-overlay-tabs" role="tablist" aria-label="Automation overlay type">
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="" aria-selected="true">None</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="pitchBend">Pitch bend</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="7">Volume</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="10">Pan</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="11">Expression</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="64">Sustain</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="1">Mod wheel</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="74">Brightness</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="71">Resonance</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="73">Attack</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="72">Release</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="91">Reverb</button>
+                <button type="button" class="ae-overlay-tab" role="tab" data-overlay-value="93">Chorus</button>
+            </div>
+            <div id="automation-editor-canvas-wrap">
+                <canvas id="automation-editor-canvas"></canvas>
+            </div>
+        </div>
+            <div id="automation-overlay-panel">
+                <label>Automation Overlay:
+                    <select id="automation-overlay-select">
+                        <option value="">None</option>
+                        <option value="pitchBend">Pitch Bend</option>
+                        <option value="7">Volume (CC7)</option>
+                        <option value="10">Pan (CC10)</option>
+                        <option value="11">Expression (CC11)</option>
+                        <option value="64">Sustain (CC64)</option>
+                        <option value="1">Mod Wheel (CC1)</option>
+                        <option value="74">Brightness / Cutoff (CC74)</option>
+                        <option value="71">Resonance / Timbre (CC71)</option>
+                        <option value="73">Attack Time (CC73)</option>
+                        <option value="72">Release Time (CC72)</option>
+                        <option value="91">Reverb Send (CC91)</option>
+                        <option value="93">Chorus Send (CC93)</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+        <div id="channel-resize-handle"></div>
+        <div id="sequencer-container">
+            <div id="automation-expanded-strip" aria-hidden="true">
+                <div id="ae-strip-resize-handle" class="ae-strip-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize automation panel height" tabindex="0"></div>
+            </div>
+            <div id="keyboard-header-spacer" class="kbd-header-active-track" role="status" aria-live="polite">
+                <span id="kbd-header-track-dot" class="kbd-header-track-dot" aria-hidden="true"></span>
+                <span id="kbd-header-track-name" class="kbd-header-track-name"></span>
+            </div>
+            <div id="playback-header">
+                <canvas id="playback-canvas"></canvas>
+            </div>
+            <div id="sb-corner"></div>
+            <div id="keyboard-panel">
+                <canvas id="keyboard-canvas"></canvas>
+            </div>
+            <div id="grid-panel">
+                <canvas id="grid-canvas"></canvas>
+            </div>
+            <div id="scrollbar-v" class="scrollbar-track scrollbar-vertical"><div class="scrollbar-thumb" id="sb-thumb-v"></div></div>
+            <div id="sb-spacer-bl"></div>
+            <div id="scrollbar-h" class="scrollbar-track scrollbar-horizontal"><div class="scrollbar-thumb" id="sb-thumb-h"></div></div>
+            <div id="sb-spacer-br"></div>
+        </div>
+    </div>
+    <div id="confirm-dialog" class="hidden">
+        <div class="dialog-content">
+            <p>Are you sure you want to reset everything?</p>
+            <button id="confirm-yes">Yes, Reset All</button>
+            <button id="confirm-no">Cancel</button>
+        </div>
+    </div>
+    <div id="conductor-value-dialog" class="hidden" role="dialog" aria-modal="true" aria-labelledby="conductor-dialog-heading" aria-hidden="true">
+        <div class="dialog-content conductor-value-dialog-panel">
+            <h2 id="conductor-dialog-heading" class="conductor-dialog-heading">Insert conductor change</h2>
+            <p id="conductor-dialog-sub" class="conductor-dialog-sub"></p>
+            <div class="conductor-dialog-field conductor-insert-bpm-wrap" id="conductor-insert-bpm-wrap">
+                <label id="conductor-insert-bpm-label" for="conductor-insert-bpm" class="conductor-insert-label">BPM</label>
+                <input type="number" id="conductor-insert-bpm" class="conductor-insert-input" min="20" max="999" step="1" autocomplete="off" />
+            </div>
+            <div class="conductor-dialog-field conductor-insert-ts-wrap hidden" id="conductor-insert-ts-wrap">
+                <span id="conductor-insert-ts-label" class="conductor-insert-label">Time signature</span>
+                <div class="conductor-insert-ts-row">
+                    <select id="conductor-insert-ts-num" aria-label="Time signature numerator">
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4" selected>4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                    </select>
+                    <span class="conductor-insert-ts-sep" aria-hidden="true">/</span>
+                    <select id="conductor-insert-ts-den" aria-label="Time signature denominator">
+                        <option value="4" selected>4</option>
+                        <option value="8">8</option>
+                    </select>
+                </div>
+            </div>
+            <div class="conductor-dialog-actions">
+                <button type="button" id="conductor-insert-ok" class="conductor-insert-ok">OK</button>
+                <button type="button" id="conductor-insert-cancel" class="conductor-insert-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+    <div id="autosave-indicator" class="autosave-indicator" role="status" aria-live="polite" aria-hidden="true" title="Saving backup…"></div>
+    <div id="song-library" class="hidden" aria-hidden="true" tabindex="-1">
+        <div class="song-library-panel">
+            <div class="song-library-header">
+                <h1 class="song-library-title">Saved songs</h1>
+                <button type="button" id="song-library-back">Back</button>
+            </div>
+            <div class="song-library-toolbar">
+                <button type="button" id="song-library-up" title="Up one folder" disabled>Up</button>
+                <button type="button" id="song-library-new-folder">New folder</button>
+                <button type="button" id="song-library-move" disabled>Move to…</button>
+                <button type="button" id="song-library-delete-selected" disabled>Delete selected</button>
+                <label class="song-library-sort-label">Sort
+                    <select id="song-library-sort">
+                        <option value="name_asc">Name A–Z</option>
+                        <option value="name_desc">Name Z–A</option>
+                        <option value="date_desc">Newest modified</option>
+                        <option value="date_asc">Oldest modified</option>
+                        <option value="size_desc">Largest file</option>
+                        <option value="size_asc">Smallest file</option>
+                        <option value="length_desc">Longest song</option>
+                        <option value="length_asc">Shortest song</option>
+                    </select>
+                </label>
+            </div>
+            <div id="song-library-breadcrumb" class="song-library-breadcrumb"></div>
+            <div class="song-library-table-head">
+                <span class="song-library-th-cb" title="Selection"></span>
+                <span class="song-library-th-name">Name</span>
+                <span class="song-library-th-meta">Size</span>
+                <span class="song-library-th-meta">Length</span>
+                <span class="song-library-th-meta">Modified</span>
+                <span class="song-library-th-actions">Actions</span>
+            </div>
+            <div id="song-library-body" class="song-library-body">
+                <div id="song-library-list" class="song-library-list"></div>
+            </div>
+        </div>
+    </div>
+    <script src="constants.js"></script>
+    <script src="audio.js"></script>
+    <script src="state.js"></script>
+    <script src="render.js"></script>
+    <script src="interactions.js"></script>
+    <script src="interactions2.js"></script>
+    <script src="playback.js"></script>
+    <script src="midi.js"></script>
+    <script src="auto-save.js"></script>
+    <script src="song-storage.js"></script>
+    <script src="automation-editor.js"></script>
+    <script src="main.js"></script>
+    <script type="module">
+        // Import SpessaSynth WorkletSynthesizer and expose it globally
+        import { WorkletSynthesizer } from 'https://cdn.jsdelivr.net/npm/spessasynth_lib@4.2.2/dist/index.js';
+        window.SpessaSynthWorkletSynthesizer = WorkletSynthesizer;
+
+        // Bundled default (same folder as index.html) loads on http(s). Optional extras: release page + file picker.
+        const SOUNDFONT_RELEASE_PAGE =
+            'https://github.com/durnurd/pulse-pro-midi-sequencer/releases/tag/soundfonts';
+        const DEFAULT_SOUNDFONT_FILE = 'GeneralUser GS v1.47.sf2';
+        const DEFAULT_SOUNDFONT_LABEL = 'GeneralUser GS v1.47';
+        const VALUE_LOAD_FILE = '__pulsepro_load_sf2__';
+        const VALUE_GET_SOUNDFONTS = '__pulsepro_get_soundfonts__';
+
+        const select = document.getElementById('soundfont-select');
+        let lastLoadedSoundFontId = null;
+
+        function ensureActionsOptgroup() {
+            if (select.querySelector('optgroup[data-pulsepro-actions]')) return;
+            const og = document.createElement('optgroup');
+            og.label = 'More';
+            og.setAttribute('data-pulsepro-actions', '1');
+            const optLoad = document.createElement('option');
+            optLoad.value = VALUE_LOAD_FILE;
+            optLoad.textContent = 'Load .sf2 from device…';
+            const optGet = document.createElement('option');
+            optGet.value = VALUE_GET_SOUNDFONTS;
+            optGet.textContent = 'Get soundfonts (new tab)…';
+            og.appendChild(optLoad);
+            og.appendChild(optGet);
+            select.appendChild(og);
+        }
+
+        function resetSelectToLastLoadedFont() {
+            if (lastLoadedSoundFontId && [...select.options].some((o) => o.value === lastLoadedSoundFontId)) {
+                select.value = lastLoadedSoundFontId;
+                return;
+            }
+            const ph = select.querySelector('option[data-pulsepro-placeholder]');
+            if (ph) {
+                ph.selected = true;
+                return;
+            }
+            if (select.options.length) select.selectedIndex = 0;
+        }
+
+        function appendNoSoundFontPlaceholder() {
+            const placeholderOpt = document.createElement('option');
+            placeholderOpt.value = '';
+            placeholderOpt.textContent = '(no SoundFont loaded)';
+            placeholderOpt.disabled = true;
+            placeholderOpt.selected = true;
+            placeholderOpt.setAttribute('data-pulsepro-placeholder', '1');
+            select.appendChild(placeholderOpt);
+            ensureActionsOptgroup();
+        }
+
+        function openSoundFontFilePicker() {
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.accept = '.sf2,.sf3,.dls';
+            inp.addEventListener('change', async () => {
+                if (!inp.files || !inp.files[0]) return;
+                const file = inp.files[0];
+                const id = file.name;
+                if (audioEngine._loadedSoundFonts.has(id)) {
+                    lastLoadedSoundFontId = id;
+                    select.value = id;
+                    await audioEngine.switchSoundFont(id);
+                    return;
+                }
+                const buffer = await file.arrayBuffer();
+                const ok = await audioEngine.loadSoundFontFromBuffer(buffer, id);
+                if (!ok) return;
+                lastLoadedSoundFontId = id;
+                const og = select.querySelector('optgroup[data-pulsepro-actions]');
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = id;
+                if (og) select.insertBefore(opt, og);
+                else select.appendChild(opt);
+                select.value = id;
+            });
+            inp.addEventListener('cancel', () => resetSelectToLastLoadedFont());
+            inp.click();
+        }
+
+        select.addEventListener('change', async () => {
+            const v = select.value;
+            if (v === VALUE_LOAD_FILE) {
+                resetSelectToLastLoadedFont();
+                openSoundFontFilePicker();
+                return;
+            }
+            if (v === VALUE_GET_SOUNDFONTS) {
+                window.open(SOUNDFONT_RELEASE_PAGE, '_blank', 'noopener,noreferrer');
+                resetSelectToLastLoadedFont();
+                return;
+            }
+            if (v) {
+                await audioEngine.switchSoundFont(v);
+                lastLoadedSoundFontId = v;
+            }
+        });
+
+        async function setupBundledDefaultSoundFont() {
+            select.innerHTML = '';
+            if (location.protocol === 'file:') {
+                appendNoSoundFontPlaceholder();
+                return;
+            }
+            const loadingOpt = document.createElement('option');
+            loadingOpt.value = '';
+            loadingOpt.textContent = 'Loading soundfont…';
+            loadingOpt.disabled = true;
+            loadingOpt.selected = true;
+            select.appendChild(loadingOpt);
+
+            const url = new URL(DEFAULT_SOUNDFONT_FILE, location.href).href;
+            const id = url;
+            const ok = await audioEngine.loadSoundFont(url, id);
+            select.innerHTML = '';
+            if (ok) {
+                lastLoadedSoundFontId = id;
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = DEFAULT_SOUNDFONT_LABEL;
+                opt.selected = true;
+                select.appendChild(opt);
+            } else {
+                appendNoSoundFontPlaceholder();
+                return;
+            }
+            ensureActionsOptgroup();
+        }
+
+        void setupBundledDefaultSoundFont();
+    </script>
+</body>
+</html>
+
