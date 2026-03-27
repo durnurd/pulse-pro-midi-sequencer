@@ -260,7 +260,18 @@ function getTheme() { return THEMES[currentTheme]; }
 function toggleTheme() {
     currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
     localStorage.setItem('pulsepro-theme', currentTheme);
-    document.documentElement.setAttribute('data-theme', currentTheme);
-    renderAll();
+
+    const applyTheme = () => {
+        document.documentElement.setAttribute('data-theme', currentTheme);
+        renderAll();
+    };
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion || typeof document.startViewTransition !== 'function') {
+        applyTheme();
+        return;
+    }
+
+    document.startViewTransition(applyTheme);
 }
 

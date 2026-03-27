@@ -1055,3 +1055,13 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
     to { transform: rotate(360deg); }
 }
 
+/* Same-document view transition when switching light/dark (see toggleTheme in constants.js). */
+@media (prefers-reduced-motion: no-preference) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+        animation-duration: 0.38s;
+        animation-timing-function: ease-in-out;
+    }
+}
+
+
