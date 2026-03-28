@@ -27,6 +27,9 @@ function syncPlaybackSoundingTracksFromMap(activeMap) {
 
 function startPlayback() {
     stopLibraryPreview();
+    if (typeof window.pulseProMidiRecordOnPlaybackStart === 'function') {
+        window.pulseProMidiRecordOnPlaybackStart();
+    }
     audioEngine.init();
     state.isPlaying = true;
     state.isPaused = false;
@@ -72,6 +75,10 @@ function seekAutomationTo(tick) {
 }
 
 function pausePlayback() {
+    if (state.midiRecordArmed && state.isPlaying) return;
+    if (typeof window.pulseProMidiRecordFlushPending === 'function') {
+        window.pulseProMidiRecordFlushPending(Math.round(state.playbackTick));
+    }
     stopLibraryPreview();
     state.isPlaying = false;
     state.isPaused = true;
@@ -90,6 +97,9 @@ function pausePlayback() {
  */
 function stopPlayback(options) {
     const naturalEnd = options && options.naturalEnd;
+    if (typeof window.pulseProMidiRecordFlushPending === 'function') {
+        window.pulseProMidiRecordFlushPending(Math.round(state.playbackTick));
+    }
     stopLibraryPreview();
     state.isPlaying = false;
     state.isPaused = false;
@@ -119,6 +129,7 @@ function stopPlayback(options) {
 
 function togglePlayPause() {
     if (state.isPlaying) {
+        if (state.midiRecordArmed) return;
         pausePlayback();
     } else {
         startPlayback();
@@ -132,7 +143,10 @@ function playbackLoop() {
     const currentTick = tickFromWallSeconds(wallAtStart + elapsed);
     // Use measure-aligned end tick for looping, raw end tick for non-loop stop
     const endMeasureTick = getEndMeasureTick();
-    const endTick = state.isRepeat ? endMeasureTick : getEndTick();
+    let endTick = state.isRepeat ? endMeasureTick : getEndTick();
+    if (state.midiRecordArmed && !state.isRepeat) {
+        endTick = 0;
+    }
 
     // Check if we've reached the end
     if (currentTick >= endTick && endTick > 0) {
@@ -186,6 +200,9 @@ function playbackLoop() {
             audioEngine.noteOn(info.note, info.channel, info.velocity);
         }
     }
+    if (typeof window.pulseProMidiRecordMergePlaybackActive === 'function') {
+        window.pulseProMidiRecordMergePlaybackActive(newActive);
+    }
     playbackActiveNotes = newActive;
     syncPlaybackSoundingTracksFromMap(newActive);
 
@@ -223,13 +240,24 @@ function updatePlaybackButtons() {
     const btnPause = document.getElementById('btn-pause');
     btnPlay.style.display = state.isPlaying ? 'none' : 'inline-block';
     btnPause.style.display = state.isPlaying ? 'inline-block' : 'none';
+    if (typeof window.pulseProUpdateMidiRecordButton === 'function') {
+        window.pulseProUpdateMidiRecordButton();
+    }
 }
 
 /** End tick used for playback boundary (matches playbackLoop). */
 function getPlaybackMaxTick() {
     const raw = getEndTick();
-    if (raw <= 0) return 0;
-    return state.isRepeat ? getEndMeasureTick() : raw;
+    let maxT;
+    if (raw <= 0) {
+        maxT = 0;
+    } else {
+        maxT = state.isRepeat ? getEndMeasureTick() : raw;
+    }
+    if (state.midiRecordArmed && state.isPlaying) {
+        maxT = Math.max(maxT, Math.ceil(state.playbackTick));
+    }
+    return maxT;
 }
 
 /**
@@ -455,6 +483,7 @@ function getLibraryPreviewSongId() {
 
 (function initPausePlaybackWhenPageInactive() {
     function pauseIfNothingShouldPlay() {
+        if (state.midiRecordArmed && state.isPlaying) return;
         if (state.isPlaying || libraryPreviewCtx) pausePlayback();
     }
     document.addEventListener('visibilitychange', function() {

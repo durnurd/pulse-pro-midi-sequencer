@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI input test — Web MIDI API</title>
+    <style>
+        :root {
+            --bg: #1a1b26;
+            --panel: #24283b;
+            --text: #c0caf5;
+            --muted: #565f89;
+            --accent: #7aa2f7;
+            --ok: #9ece6a;
+            --warn: #e0af68;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 1rem 1.25rem;
+            line-height: 1.45;
+        }
+        h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.5rem; }
+        p.hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 1rem; max-width: 52rem; }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        button {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid var(--muted);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        button:hover { border-color: var(--accent); }
+        button:disabled { opacity: 0.45; cursor: not-allowed; }
+        label { font-size: 0.875rem; color: var(--muted); }
+        select {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid var(--muted);
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            min-width: 14rem;
+            max-width: 100%;
+        }
+        #status {
+            font-size: 0.875rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            background: var(--panel);
+            border: 1px solid var(--muted);
+        }
+        #status.ready { border-color: var(--ok); color: var(--ok); }
+        #status.error { border-color: #f7768e; color: #f7768e; }
+        #log-wrap {
+            border: 1px solid var(--muted);
+            border-radius: 8px;
+            overflow: hidden;
+            background: #16161e;
+        }
+        #log-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.35rem 0.6rem;
+            background: var(--panel);
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+        #log {
+            font-family: "Consolas", "Cascadia Code", ui-monospace, monospace;
+            font-size: 0.8rem;
+            height: min(60vh, 480px);
+            overflow-y: auto;
+            margin: 0;
+            padding: 0.5rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .line { margin: 0 0 0.15rem; }
+        .line.note { color: #bb9af7; }
+        .line.cc { color: #7dcfff; }
+        .line.pb { color: #ff9e64; }
+        .line.sys { color: var(--muted); }
+    </style>
+</head>
+<body>
+    <h1>MIDI input test</h1>
+    <p class="hint">
+        Uses the browser <strong>Web MIDI API</strong>. Serve this folder over <code>http://localhost</code>
+        (or HTTPS); many browsers block MIDI on <code>file://</code>. Click &quot;Enable MIDI&quot; and grant access
+        if prompted. Play pads or keys on your controller to see messages below.
+    </p>
+
+    <div class="toolbar">
+        <button type="button" id="btn-enable">Enable MIDI</button>
+        <label>
+            Input:
+            <select id="input-select" disabled aria-label="MIDI input device">
+                <option value="">— connect a device —</option>
+            </select>
+        </label>
+        <button type="button" id="btn-clear" disabled>Clear log</button>
+    </div>
+    <p id="status" role="status">Not connected. Click &quot;Enable MIDI&quot;.</p>
+
+    <div id="log-wrap">
+        <div id="log-head">
+            <span>Raw + decoded (newest at bottom)</span>
+            <span id="count">0 messages</span>
+        </div>
+        <div id="log" aria-live="polite" aria-relevant="additions"></div>
+    </div>
+
+    <script>
+        (function () {
+            const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+            function noteName(n) {
+                const o = Math.floor(n / 12) - 1;
+                return NOTE_NAMES[n % 12] + o;
+            }
+
+            function decodeMidiMessage(data) {
+                const [status, a, b] = data;
+                const cmd = status & 0xf0;
+                const ch = (status & 0x0f) + 1;
+                const hex = Array.from(data).map((x) => x.toString(16).padStart(2, '0')).join(' ');
+                let kind = 'sys';
+                let text = '';
+
+                if (cmd === 0x80) {
+                    kind = 'note';
+                    text = `Note Off  ch${ch} ${noteName(a)} vel ${b}`;
+                } else if (cmd === 0x90) {
+                    kind = 'note';
+                    text = b === 0
+                        ? `Note Off  ch${ch} ${noteName(a)} (vel0)`
+                        : `Note On   ch${ch} ${noteName(a)} vel ${b}`;
+                } else if (cmd === 0xa0) {
+                    kind = 'cc';
+                    text = `Poly AT   ch${ch} note ${noteName(a)} pressure ${b}`;
+                } else if (cmd === 0xb0) {
+                    kind = 'cc';
+                    text = `CC        ch${ch} controller ${a} value ${b}`;
+                } else if (cmd === 0xc0) {
+                    kind = 'cc';
+                    text = `Program   ch${ch} program ${a}`;
+                } else if (cmd === 0xd0) {
+                    kind = 'cc';
+                    text = `Ch pressure ch${ch} ${a}`;
+                } else if (cmd === 0xe0) {
+                    kind = 'pb';
+                    const bend = ((b << 7) | a) - 8192;
+                    text = `Pitch bend ch${ch} ${bend} (raw ${a},${b})`;
+                } else {
+                    text = `Other     ${hex}`;
+                }
+
+                return { hex, kind, text };
+            }
+
+            const btnEnable = document.getElementById('btn-enable');
+            const btnClear = document.getElementById('btn-clear');
+            const inputSelect = document.getElementById('input-select');
+            const statusEl = document.getElementById('status');
+            const logEl = document.getElementById('log');
+            const countEl = document.getElementById('count');
+
+            let midiAccess = null;
+            let messageCount = 0;
+            const listeners = new Map();
+
+            function setStatus(msg, cls) {
+                statusEl.textContent = msg;
+                statusEl.className = cls || '';
+            }
+
+            function appendLine(kind, line) {
+                const div = document.createElement('div');
+                div.className = 'line ' + kind;
+                div.textContent = line;
+                logEl.appendChild(div);
+                logEl.scrollTop = logEl.scrollHeight;
+                messageCount++;
+                countEl.textContent = messageCount + (messageCount === 1 ? ' message' : ' messages');
+            }
+
+            function detachAllInputs() {
+                for (const [, port] of listeners) {
+                    try {
+                        port.onmidimessage = null;
+                    } catch (_) { /* ignore */ }
+                }
+                listeners.clear();
+            }
+
+            function attachInput(port) {
+                detachAllInputs();
+                if (!port) return;
+                port.onmidimessage = function (ev) {
+                    const data = ev.data;
+                    if (!data || data.length < 1) return;
+                    const d = decodeMidiMessage(data);
+                    const ts = new Date().toISOString().slice(11, 23);
+                    appendLine(d.kind, '[' + ts + '] ' + d.hex + '  ' + d.text);
+                };
+                listeners.set(port.id, port);
+            }
+
+            function fillInputList() {
+                const prev = inputSelect.value;
+                inputSelect.innerHTML = '';
+                if (!midiAccess || midiAccess.inputs.size === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = '— no inputs —';
+                    inputSelect.appendChild(opt);
+                    inputSelect.disabled = true;
+                    return;
+                }
+                inputSelect.disabled = false;
+                const sorted = Array.from(midiAccess.inputs.values()).sort((a, b) =>
+                    (a.name || a.id).localeCompare(b.name || b.id));
+                for (const inp of sorted) {
+                    const opt = document.createElement('option');
+                    opt.value = inp.id;
+                    opt.textContent = inp.name || inp.id;
+                    inputSelect.appendChild(opt);
+                }
+                if (prev && [...inputSelect.options].some((o) => o.value === prev)) {
+                    inputSelect.value = prev;
+                } else {
+                    inputSelect.selectedIndex = 0;
+                }
+                const selected = midiAccess.inputs.get(inputSelect.value);
+                attachInput(selected || null);
+            }
+
+            function onStateChange() {
+                fillInputList();
+                if (midiAccess && midiAccess.inputs.size > 0) {
+                    setStatus('MIDI ready. ' + midiAccess.inputs.size + ' input(s).', 'ready');
+                } else if (midiAccess) {
+                    setStatus('MIDI enabled but no input devices found.', '');
+                }
+            }
+
+            btnEnable.addEventListener('click', function () {
+                if (!navigator.requestMIDIAccess) {
+                    setStatus('Web MIDI API is not available in this browser.', 'error');
+                    return;
+                }
+                setStatus('Requesting MIDI access…', '');
+                btnEnable.disabled = true;
+                navigator.requestMIDIAccess({ sysex: false })
+                    .then(function (access) {
+                        midiAccess = access;
+                        midiAccess.onstatechange = onStateChange;
+                        fillInputList();
+                        btnClear.disabled = false;
+                        onStateChange();
+                    })
+                    .catch(function (err) {
+                        setStatus('MIDI access denied or failed: ' + (err && err.message ? err.message : String(err)), 'error');
+                        btnEnable.disabled = false;
+                    });
+            });
+
+            inputSelect.addEventListener('change', function () {
+                if (!midiAccess) return;
+                const port = midiAccess.inputs.get(inputSelect.value);
+                attachInput(port || null);
+                appendLine('sys', '— switched input: ' + (port ? (port.name || port.id) : 'none') + ' —');
+            });
+
+            btnClear.addEventListener('click', function () {
+                logEl.innerHTML = '';
+                messageCount = 0;
+                countEl.textContent = '0 messages';
+            });
+
+            if (location.protocol === 'file:') {
+                setStatus('Opened as file:// — Web MIDI may be blocked. Use a local HTTP server.', 'error');
+            }
+        })();
+    </script>
+</body>
+</html>

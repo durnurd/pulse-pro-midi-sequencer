@@ -674,6 +674,17 @@
         btnRepeat.classList.toggle('active', state.isRepeat);
         renderAll();
     });
+    const btnMidiRecord = document.getElementById('btn-midi-record');
+    if (btnMidiRecord && typeof window.pulseProApplyMidiRecordArmed === 'function') {
+        btnMidiRecord.addEventListener('click', function() {
+            blurIfActive(this);
+            const next = !state.midiRecordArmed;
+            void window.pulseProApplyMidiRecordArmed(next);
+        });
+        if (typeof window.pulseProUpdateMidiRecordButton === 'function') {
+            window.pulseProUpdateMidiRecordButton();
+        }
+    }
 
     // --- Playback time display (M:S ↔ measure.beat, editable seek) ---
     const TIME_FORMAT_STORAGE_KEY = 'pulsepro-time-format';

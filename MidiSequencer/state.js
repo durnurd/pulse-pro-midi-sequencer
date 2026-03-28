@@ -27,6 +27,8 @@ const state = {
     isPlaying: false,
     isPaused: false,
     isRepeat: false,
+    /** When true, MIDI note on/off from hardware is written to the piano roll during playback. */
+    midiRecordArmed: false,
     playbackStartTime: 0,
     playbackStartTick: 0,
     /** Last playhead tick set by clicking/dragging the playback header (restore after natural end when repeat is off). */

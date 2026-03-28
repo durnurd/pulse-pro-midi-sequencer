@@ -481,6 +481,35 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
     background: transparent;
     filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 8px var(--accent));
 }
+#toolbar .playback-controls button.playback-icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* MIDI record: armed = hollow red ring; armed + playing = solid pulse */
+#toolbar .midi-record-btn .midi-record-dot {
+    display: block;
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    border: 2px solid rgba(180, 180, 190, 0.55);
+    background: transparent;
+    box-sizing: border-box;
+}
+#toolbar .midi-record-btn.active .midi-record-dot {
+    border-color: #e63946;
+    box-shadow: 0 0 0 1px rgba(230, 57, 70, 0.35);
+}
+#toolbar .midi-record-btn.recording .midi-record-dot {
+    background: #e63946;
+    border-color: #e63946;
+    animation: midi-record-pulse 1.1s ease-in-out infinite;
+}
+@keyframes midi-record-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.75; transform: scale(0.92); }
+}
 
 .playback-time-group {
     gap: 6px;
@@ -883,9 +912,17 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
     touch-action: none;
 }
 #sb-corner { background: var(--toolbar-bg); border-bottom: 1px solid var(--toolbar-border); }
-#keyboard-panel { overflow: hidden; border-right: 1px solid var(--toolbar-border); }
+#keyboard-panel {
+    overflow: hidden;
+    border-right: 1px solid var(--toolbar-border);
+    background: var(--toolbar-bg);
+}
 #keyboard-panel canvas { display: block; cursor: pointer; }
-#grid-panel { overflow: hidden; position: relative; }
+#grid-panel {
+    overflow: hidden;
+    position: relative;
+    background: var(--bg);
+}
 #grid-panel canvas { display: block; }
 #sb-spacer-bl { background: var(--toolbar-bg); border-right: 1px solid var(--toolbar-border); }
 #sb-spacer-br { background: var(--toolbar-bg); }

@@ -69,6 +69,7 @@
                 <button type="button" id="btn-pause" class="playback-icon-btn" title="Pause (Space)"><img class="ui-icon playback-icon-img" src="Icons/Pause.png" alt="" /></button>
                 <button type="button" id="btn-stop" class="playback-icon-btn" title="Stop"><img class="ui-icon playback-icon-img" src="Icons/Stop.png" alt="" /></button>
                 <button type="button" id="btn-repeat" class="playback-icon-btn toggle-btn" title="Repeat"><img class="ui-icon playback-icon-img" src="Icons/Repeat.png" alt="" /></button>
+                <button type="button" id="btn-midi-record" class="playback-icon-btn toggle-btn midi-record-btn" title="Arm MIDI record: incoming MIDI channel + selected track’s channel (1–16, wrap) → recorded channel &amp; track; playhead runs until Stop or record off; Pause disabled while recording" aria-pressed="false"><span class="midi-record-dot" aria-hidden="true"></span></button>
             </div>
             <div class="toolbar-group playback-time-group">
                 <button type="button" id="btn-time-format" class="time-format-btn" title="Switch between M:S and measure.beat">M:S</button>
@@ -303,6 +304,7 @@
     <script src="interactions.js"></script>
     <script src="interactions2.js"></script>
     <script src="playback.js"></script>
+    <script src="midi-record.js"></script>
     <script src="midi.js"></script>
     <script src="auto-save.js"></script>
     <script src="song-storage.js"></script>

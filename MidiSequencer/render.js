@@ -6,14 +6,27 @@ const keyCtx = keyCanvas.getContext('2d');
 const pbCanvas = document.getElementById('playback-canvas');
 const pbCtx = pbCanvas.getContext('2d');
 
+/**
+ * Inner height for layout/scroll (clientHeight minus vertical padding).
+ * When the automation strip is docked, panels use padding-bottom to reserve space;
+ * canvases must use only the content box so the strip does not cover the piano roll.
+ */
+function getElementContentHeight(el) {
+    if (!el) return 0;
+    const st = getComputedStyle(el);
+    const pt = parseFloat(st.paddingTop) || 0;
+    const pb = parseFloat(st.paddingBottom) || 0;
+    return Math.max(0, el.clientHeight - pt - pb);
+}
+
 function resizeCanvases() {
-    const container = document.getElementById('sequencer-container');
     const gridPanel = document.getElementById('grid-panel');
     const keyPanel = document.getElementById('keyboard-panel');
-    const pbHeader = document.getElementById('playback-header');
 
     const w = gridPanel.clientWidth;
-    const h = gridPanel.clientHeight;
+    const gh = getElementContentHeight(gridPanel);
+    const kh = getElementContentHeight(keyPanel);
+    const h = Math.min(gh, kh);
     state.gridWidth = w;
     state.gridHeight = h;
 
@@ -35,6 +48,7 @@ function resizeCanvases() {
     pbCanvas.style.height = PLAYBACK_HEADER_HEIGHT + 'px';
     pbCtx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 
+    clampScrollToViewport();
     if (window.aeResize) window.aeResize();
 }
 
@@ -266,6 +280,10 @@ function renderGrid() {
         gridCtx.globalAlpha = 1.0;
     }
 
+    if (typeof window.pulseProDrawMidiRecordLiveNotes === 'function') {
+        window.pulseProDrawMidiRecordLiveNotes(gridCtx, sx, sy, w, h, NOTE_RADIUS, NOTE_HEIGHT);
+    }
+
     // Selection rectangle
     if (state.mode === 'selecting' && state.interactionData) {
         const d = state.interactionData;
@@ -325,6 +343,9 @@ function renderKeyboard() {
                 n.startTick + n.durationTicks > state.playbackTick) {
                 playingKeys.set(n.note, getTrackColor(n.track));
             }
+        }
+        if (typeof window.pulseProMidiRecordMergePlayingKeys === 'function') {
+            window.pulseProMidiRecordMergePlayingKeys(playingKeys);
         }
     }
 
@@ -467,10 +488,17 @@ function getMaxScrollX() {
     return Math.max(0, contentTicks * SNAP_WIDTH - state.gridWidth);
 }
 
+function clampScrollToViewport() {
+    const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
+    state.scrollY = Math.max(0, Math.min(maxSY, state.scrollY));
+    const maxSX = Math.max(0, getMaxScrollX());
+    state.scrollX = Math.max(0, Math.min(maxSX, state.scrollX));
+}
+
 function updateScrollbars() {
     const maxSY = Math.max(1, TOTAL_HEIGHT - state.gridHeight);
     const maxSX = Math.max(1, getMaxScrollX());
-    const trackH = sbTrackV.clientHeight;
+    const trackH = Math.max(1, getElementContentHeight(sbTrackV));
     const trackW = sbTrackH.clientWidth;
 
     // Vertical thumb
@@ -511,7 +539,7 @@ function updateScrollbars() {
         const { axis, startMouse, startScroll } = dragging;
         const delta = (axis === 'v' ? e.clientY : e.clientX) - startMouse;
         if (axis === 'v') {
-            const trackH = sbTrackV.clientHeight;
+            const trackH = Math.max(1, getElementContentHeight(sbTrackV));
             const maxSY = Math.max(1, TOTAL_HEIGHT - state.gridHeight);
             const vRatio = state.gridHeight / TOTAL_HEIGHT;
             const thumbH = Math.max(20, trackH * vRatio);
@@ -545,8 +573,12 @@ function updateScrollbars() {
     // Click on track to jump
     sbTrackV.addEventListener('mousedown', function(e) {
         if (e.target === sbThumbV) return;
+        const trackH = Math.max(1, getElementContentHeight(sbTrackV));
         const rect = sbTrackV.getBoundingClientRect();
-        const ratio = (e.clientY - rect.top) / rect.height;
+        const padTop = parseFloat(getComputedStyle(sbTrackV).paddingTop) || 0;
+        const yRaw = e.clientY - rect.top - padTop;
+        const yInTrack = Math.max(0, Math.min(trackH, yRaw));
+        const ratio = trackH > 0 ? yInTrack / trackH : 0;
         const maxSY = Math.max(1, TOTAL_HEIGHT - state.gridHeight);
         state.scrollY = Math.max(0, Math.min(maxSY, ratio * TOTAL_HEIGHT - state.gridHeight / 2));
         renderAll();
