@@ -488,6 +488,16 @@ function getMaxScrollX() {
     return Math.max(0, contentTicks * SNAP_WIDTH - state.gridWidth);
 }
 
+/** Tick span used for horizontal scroll range (same basis as {@link getMaxScrollX}). */
+function getTimelineSpanTicks() {
+    const endTick = getEndTick();
+    const tpmEnd = ticksPerMeasureAtTick(Math.max(0, endTick));
+    const pad = tpmEnd * 4;
+    return Math.max(pad, endTick + tpmEnd * 2);
+}
+
+window.getTimelineSpanTicks = getTimelineSpanTicks;
+
 function clampScrollToViewport() {
     const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
     state.scrollY = Math.max(0, Math.min(maxSY, state.scrollY));

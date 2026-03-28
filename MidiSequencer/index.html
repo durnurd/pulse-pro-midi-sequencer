@@ -34,10 +34,6 @@
                         <button id="btn-save-local" title="Save to browser">Save</button>
                         <button id="btn-save-as-local" title="Save as new song in browser">Save As…</button>
                         <button id="btn-export-midi" title="Export MIDI file">Export…</button>
-                        <div class="menu-separator"></div>
-                        <button id="btn-theme-menu" title="Toggle Light/Dark Mode">
-                            <span class="menu-check" id="theme-check">✓</span> Dark Mode
-                        </button>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -51,6 +47,17 @@
                         <button id="btn-edit-select-all" title="Select All (Ctrl+A)">Select All <span class="menu-shortcut">Ctrl+A</span></button>
                         <div class="menu-separator"></div>
                         <button id="btn-edit-delete" title="Delete (Del)">Delete <span class="menu-shortcut">Del</span></button>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="dropbtn" id="btn-view-menu">View</button>
+                    <div class="dropdown-content" id="view-dropdown">
+                        <button type="button" id="btn-theme-menu" title="Toggle light / dark theme">
+                            <span class="menu-check" id="theme-check">✓</span> Dark mode
+                        </button>
+                        <div class="menu-separator"></div>
+                        <button type="button" id="btn-view-reset-zoom" title="Restore default horizontal and vertical zoom">Reset zoom</button>
+                        <button type="button" id="btn-view-zoom-fit" title="Zoom out until the whole timeline fits (or minimum zoom if the song is very long)">Zoom to fit</button>
                     </div>
                 </div>
                 <div class="dropdown">

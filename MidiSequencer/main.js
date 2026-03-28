@@ -1068,6 +1068,23 @@
         updateEditMenuUndoRedoLabels();
     });
 
+    const btnViewMenu = document.getElementById('btn-view-menu');
+    const viewDropdown = document.getElementById('view-dropdown');
+    if (btnViewMenu && viewDropdown) {
+        btnViewMenu.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const wasOpen = viewDropdown.parentElement.classList.contains('show');
+            closeAllDropdowns();
+            if (!wasOpen) viewDropdown.parentElement.classList.add('show');
+        });
+        btnViewMenu.addEventListener('mouseenter', function() {
+            if (isAnyMenuOpen() && !viewDropdown.parentElement.classList.contains('show')) {
+                closeAllDropdowns();
+                viewDropdown.parentElement.classList.add('show');
+            }
+        });
+    }
+
     // Close dropdown when clicking outside
     window.addEventListener('click', function(e) {
         if (!e.target.matches('.dropbtn')) {
@@ -1321,22 +1338,75 @@
         renderAll();
     });
 
-    // Theme toggle
+    function applyResetZoom() {
+        NOTE_HEIGHT = NOTE_HEIGHT_DEFAULT;
+        TOTAL_HEIGHT = TOTAL_MIDI_NOTES * NOTE_HEIGHT;
+        BEAT_WIDTH = BEAT_WIDTH_DEFAULT;
+        SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN;
+        resizeCanvases();
+        clampScrollToViewport();
+        state.scrollX = 0;
+        const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
+        state.scrollY = Math.max(0, Math.min(maxSY, (TOTAL_HEIGHT - state.gridHeight) / 2));
+        renderAll();
+    }
+
+    function applyZoomToFit() {
+        resizeCanvases();
+        const spanTicks = typeof window.getTimelineSpanTicks === 'function'
+            ? window.getTimelineSpanTicks()
+            : Math.max(MIDI_TPQN * 4, getEndTick());
+        const gw = state.gridWidth;
+        if (gw <= 8 || spanTicks < 1) {
+            renderAll();
+            return;
+        }
+        const wIdeal = (gw * MIDI_TPQN) / spanTicks;
+        BEAT_WIDTH = Math.max(BEAT_WIDTH_MIN, Math.min(BEAT_WIDTH_MAX, wIdeal));
+        SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN;
+        resizeCanvases();
+        clampScrollToViewport();
+        state.scrollX = 0;
+        const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
+        state.scrollY = Math.max(0, Math.min(maxSY, (TOTAL_HEIGHT - state.gridHeight) / 2));
+        renderAll();
+    }
+
+    const btnViewResetZoom = document.getElementById('btn-view-reset-zoom');
+    if (btnViewResetZoom) {
+        btnViewResetZoom.addEventListener('click', function() {
+            blurIfActive(this);
+            applyResetZoom();
+        });
+    }
+    const btnViewZoomFit = document.getElementById('btn-view-zoom-fit');
+    if (btnViewZoomFit) {
+        btnViewZoomFit.addEventListener('click', function() {
+            blurIfActive(this);
+            applyZoomToFit();
+        });
+    }
+
+    // Theme toggle (View menu)
     const btnThemeMenu = document.getElementById('btn-theme-menu');
     const themeCheck = document.getElementById('theme-check');
-    
+
     function updateThemeUI() {
+        if (!themeCheck) return;
         if (currentTheme === 'dark') {
             themeCheck.classList.add('checked');
         } else {
             themeCheck.classList.remove('checked');
         }
     }
-    
-    btnThemeMenu.addEventListener('click', function() {
-        toggleTheme();
-        updateThemeUI();
-    });
+
+    if (btnThemeMenu) {
+        btnThemeMenu.addEventListener('click', function() {
+            blurIfActive(this);
+            toggleTheme();
+            updateThemeUI();
+        });
+    }
 
     // Automation overlay dropdown
     const autoOverlaySelect = document.getElementById('automation-overlay-select');
