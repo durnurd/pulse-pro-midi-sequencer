@@ -18,7 +18,10 @@ function updateHighlightedKeys() {
         state.highlightedKeys.add(state.interactionNote.note);
     }
 }
-function gc(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left + state.scrollX, y: e.clientY - r.top + state.scrollY }; }
+function gc(e) {
+    const r = canvas.getBoundingClientRect();
+    return gridPointerToWorld(e.clientX - r.left, e.clientY - r.top);
+}
 function ht(gx, gy) {
     const note = getNoteAt(gx, gy); if (!note) return { type: 'empty', note: null };
     const nx = note.startTick * SNAP_WIDTH, nw = note.durationTicks * SNAP_WIDTH, rx = gx - nx;
@@ -57,8 +60,10 @@ canvas.addEventListener('dblclick', function(e) {
     if (state.conductorPlacementMode) return;
     if (e.button !== 0 || state.activeTool !== 'cursor') return;
     audioEngine.init(); const { x, y } = gc(e);
-    const tick = Math.max(0, snapTick(x)), nn = noteFromY(y);
-    if (nn < 0 || nn > 127) return;
+    const tick = Math.max(0, snapTick(x)), nnRaw = noteFromY(y);
+    if (nnRaw < 0 || nnRaw > 127) return;
+    const nn = keyLockPlacementPitchOrNull(nnRaw, e.shiftKey, state.keySignature);
+    if (nn === null) return;
     pushUndoState('add note');
     const n = addNote(nn, state.activeChannel, tick, TICKS_PER_SNAP, lastVelocityForNote(nn));
     state.mode = 'placing'; state.interactionNote = n;
@@ -169,12 +174,14 @@ canvas.addEventListener('mousedown', function(e) {
         // Empty space: create a new note
         const tick = Math.max(0, snapTick(x));
         if (nn < 0 || nn > 127) return;
+        const nnPlace = keyLockPlacementPitchOrNull(nn, e.shiftKey, state.keySignature);
+        if (nnPlace === null) return;
         pushUndoState('add note');
-        const n = addNote(nn, state.activeChannel, tick, TICKS_PER_SNAP, lastVelocityForNote(nn));
+        const n = addNote(nnPlace, state.activeChannel, tick, TICKS_PER_SNAP, lastVelocityForNote(nnPlace));
         state.mode = 'placing'; state.interactionNote = n;
         state.interactionData = { originTick: tick };
         state.selectedNoteIds.clear(); state.selectedNoteIds.add(n.id);
-        audioEngine.noteOn(nn, state.activeChannel); updateHighlightedKeys(); renderAll(); return;
+        audioEngine.noteOn(nnPlace, state.activeChannel); updateHighlightedKeys(); renderAll(); return;
     }
     // Cursor
     const h = ht(x, y);
@@ -191,10 +198,16 @@ canvas.addEventListener('mousedown', function(e) {
 });
 
 // Move drag
-function moveDrag(gx, gy) {
+function moveDrag(gx, gy, shiftHeld) {
     const d = state.interactionData, dx = gx - d.startMouseX, dy = gy - d.startMouseY;
     if (!d.lockedAxis) { if (Math.abs(dx) > 5 || Math.abs(dy) > 5) d.lockedAxis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'; else return; }
     for (const [id, orig] of d.origPositions) { const n = state.notes.find(nn => nn.id === id); if (!n) continue; if (d.lockedAxis === 'h') n.startTick = Math.max(0, orig.startTick + snapTick(dx)); else n.note = Math.max(0, Math.min(127, orig.note - Math.round(dy / NOTE_HEIGHT))); }
+    if (d.lockedAxis === 'v' && isKeySignatureActive(state.keySignature) && !shiftHeld) {
+        for (const [id, orig] of d.origPositions) {
+            const n = state.notes.find(nn => nn.id === id);
+            if (n) n.note = snapMidiNoteToKey(n.note, state.keySignature);
+        }
+    }
     if (d.lockedAxis === 'v') { const mn = state.interactionNote; if (mn.note !== d.lastPreviewNote) { audioEngine.noteOff(d.lastPreviewNote, mn.channel); audioEngine.noteOn(mn.note, mn.channel); d.lastPreviewNote = mn.note; } }
     renderAll();
 }
@@ -231,7 +244,7 @@ document.addEventListener('mousemove', function(e) {
         }
         updateHighlightedKeys(); renderAll();
     }
-    else if (state.mode === 'moving') { moveDrag(gx, gy); updateHighlightedKeys(); }
+    else if (state.mode === 'moving') { moveDrag(gx, gy, e.shiftKey); updateHighlightedKeys(); }
     else if (state.mode === 'selecting') {
         state.interactionData.currentX = gx; state.interactionData.currentY = gy;
         const d = state.interactionData;
@@ -328,8 +341,17 @@ function handleSequencerWheelEvent(e, mouseXInGrid, mouseYInGrid) {
         zoomVertical(e.deltaY, mouseYInGrid);
         return;
     }
-    state.scrollX = Math.max(0, state.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0));
-    state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight, state.scrollY + (e.shiftKey ? 0 : e.deltaY)));
+    if (state.verticalPianoRoll) {
+        const maxPX = typeof getMaxPitchScrollPx === 'function' ? getMaxPitchScrollPx() : 0;
+        state.scrollX = Math.max(0, Math.min(maxPX, state.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0)));
+        if (typeof window.applyVerticalRollWheelToPlayhead === 'function') {
+            window.applyVerticalRollWheelToPlayhead(e.deltaY, e.shiftKey);
+        }
+        if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+    } else {
+        state.scrollX = Math.max(0, state.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0));
+        state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight, state.scrollY + (e.shiftKey ? 0 : e.deltaY)));
+    }
     renderAll();
 }
 window.handleSequencerWheelEvent = handleSequencerWheelEvent;
@@ -375,13 +397,15 @@ document.addEventListener('keydown', function(e) {
         // Reset playback anchor so playback continues from new position
         state.playbackStartTick = state.playbackTick;
         state.playbackStartTime = performance.now();
-        // Auto-scroll to keep playhead in view
-        const pbX = state.playbackTick * SNAP_WIDTH;
-        const margin = TICKS_PER_SNAP * SNAP_WIDTH * 2;
-        if (pbX < state.scrollX + margin) {
-            state.scrollX = Math.max(0, pbX - margin);
-        } else if (pbX > state.scrollX + state.gridWidth - margin) {
-            state.scrollX = pbX - state.gridWidth + margin;
+        // Auto-scroll to keep playhead in view (horizontal timeline only; vertical ruler is tied to grid pan)
+        if (!state.verticalPianoRoll) {
+            const pbX = state.playbackTick * SNAP_WIDTH;
+            const margin = TICKS_PER_SNAP * SNAP_WIDTH * 2;
+            if (pbX < state.scrollX + margin) {
+                state.scrollX = Math.max(0, pbX - margin);
+            } else if (pbX > state.scrollX + state.gridWidth - margin) {
+                state.scrollX = pbX - state.gridWidth + margin;
+            }
         }
         renderAll(); return;
     }
@@ -391,7 +415,12 @@ document.addEventListener('keydown', function(e) {
         state.playbackStartTick = 0;
         state.lastMousePlaybackTick = 0;
         state.playbackStartTime = performance.now();
-        state.scrollX = 0;
+        if (state.verticalPianoRoll) {
+            state.verticalTimePanPx = 0;
+            state.timelineHeaderScrollPx = 0;
+        } else {
+            state.scrollX = 0;
+        }
         renderAll(); return;
     }
     if (e.key === 'End') {
@@ -401,15 +430,28 @@ document.addEventListener('keydown', function(e) {
         state.playbackStartTick = endTick;
         state.lastMousePlaybackTick = endTick;
         state.playbackStartTime = performance.now();
-        const pbX = endTick * SNAP_WIDTH;
-        state.scrollX = Math.max(0, pbX - state.gridWidth + TICKS_PER_SNAP * SNAP_WIDTH * 2);
+        if (state.verticalPianoRoll) {
+            state.verticalTimePanPx = 0;
+            state.timelineHeaderScrollPx = 0;
+        } else {
+            const pbX = endTick * SNAP_WIDTH;
+            const m = TICKS_PER_SNAP * SNAP_WIDTH * 2;
+            state.scrollX = Math.max(0, pbX - state.gridWidth + m);
+        }
         renderAll(); return;
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
         const scrollStep = NOTE_HEIGHT * 4;
-        state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight,
-            state.scrollY + (e.key === 'ArrowDown' ? scrollStep : -scrollStep)));
+        if (state.verticalPianoRoll) {
+            if (!state.isPlaying && typeof window.applyVerticalRollWheelToPlayhead === 'function') {
+                const fakeDelta = e.key === 'ArrowDown' ? 120 : -120;
+                window.applyVerticalRollWheelToPlayhead(fakeDelta, false);
+            }
+        } else {
+            state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight,
+                state.scrollY + (e.key === 'ArrowDown' ? scrollStep : -scrollStep)));
+        }
         renderAll(); return;
     }
     if (!(e.ctrlKey || e.metaKey)) {

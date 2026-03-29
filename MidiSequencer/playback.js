@@ -39,6 +39,9 @@ function startPlayback() {
     state.playbackSoundingTracks.clear();
     // Seek automation indices to current playback position and apply last-known values
     seekAutomationTo(state.playbackTick);
+    if (typeof window.pulseProMidiOutSendProgramsFromAudioEngine === 'function') {
+        window.pulseProMidiOutSendProgramsFromAudioEngine();
+    }
     updatePlaybackButtons();
     playbackLoop();
 }
@@ -72,7 +75,27 @@ function seekAutomationTo(tick) {
     for (const info of lastCC.values()) {
         audioEngine.controllerChange(info.channel, info.controller, info.value);
     }
+    if (typeof window.pulseProMidiOutAfterAutomationSeek === 'function') {
+        window.pulseProMidiOutAfterAutomationSeek(lastPB, lastCC);
+    }
 }
+
+/**
+ * After appending pitch-bend or CC events during live MIDI record, advance scan indices so the
+ * next playbackLoop frame does not re-send automation already applied in the record handler.
+ */
+function playbackResyncAutomationIndicesAfterRecord() {
+    if (!state.isPlaying) return;
+    const t = state.playbackTick;
+    let i = 0;
+    while (i < state.pitchBends.length && state.pitchBends[i].tick <= t) i++;
+    playbackPBIndex = i;
+    i = 0;
+    while (i < state.controllerChanges.length && state.controllerChanges[i].tick <= t) i++;
+    playbackCCIndex = i;
+}
+
+window.playbackResyncAutomationIndicesAfterRecord = playbackResyncAutomationIndicesAfterRecord;
 
 function pausePlayback() {
     if (state.midiRecordArmed && state.isPlaying) return;
@@ -85,6 +108,9 @@ function pausePlayback() {
     if (playbackAnimFrame) cancelAnimationFrame(playbackAnimFrame);
     playbackAnimFrame = null;
     audioEngine.allNotesOff();
+    if (typeof window.pulseProMidiOutAllNotesOff === 'function') {
+        window.pulseProMidiOutAllNotesOff();
+    }
     playbackActiveNotes.clear();
     state.playbackSoundingTracks.clear();
     updatePlaybackButtons();
@@ -117,6 +143,9 @@ function stopPlayback(options) {
         state.playbackStartTick = t;
         seekAutomationTo(t);
     } else {
+        if (typeof window.pulseProMidiOutFullSilence === 'function') {
+            window.pulseProMidiOutFullSilence();
+        }
         state.playbackTick = 0;
         state.playbackStartTick = 0;
         state.lastMousePlaybackTick = 0;
@@ -156,6 +185,12 @@ function playbackLoop() {
             state.playbackTick = 0;
             audioEngine.allNotesOff();
             audioEngine.resetAllControllers();
+            if (typeof window.pulseProMidiOutFullSilence === 'function') {
+                window.pulseProMidiOutFullSilence();
+            }
+            if (typeof window.pulseProMidiOutSendProgramsFromAudioEngine === 'function') {
+                window.pulseProMidiOutSendProgramsFromAudioEngine();
+            }
             playbackActiveNotes.clear();
             state.playbackSoundingTracks.clear();
             playbackPBIndex = 0;
@@ -192,12 +227,18 @@ function playbackLoop() {
     for (const [id, info] of playbackActiveNotes) {
         if (!newActive.has(id)) {
             audioEngine.noteOff(info.note, info.channel);
+            if (typeof window.pulseProMidiOutNoteOff === 'function') {
+                window.pulseProMidiOutNoteOff(info.note, info.channel);
+            }
         }
     }
     // Now start newly active notes
     for (const [id, info] of newActive) {
         if (!playbackActiveNotes.has(id)) {
             audioEngine.noteOn(info.note, info.channel, info.velocity);
+            if (typeof window.pulseProMidiOutNoteOn === 'function') {
+                window.pulseProMidiOutNoteOn(info.note, info.channel, info.velocity);
+            }
         }
     }
     if (typeof window.pulseProMidiRecordMergePlaybackActive === 'function') {
@@ -211,6 +252,9 @@ function playbackLoop() {
     while (playbackPBIndex < pbs.length && pbs[playbackPBIndex].tick <= state.playbackTick) {
         const e = pbs[playbackPBIndex];
         audioEngine.pitchWheel(e.channel, e.value);
+        if (typeof window.pulseProMidiOutPitchWheel === 'function') {
+            window.pulseProMidiOutPitchWheel(e.channel, e.value);
+        }
         playbackPBIndex++;
     }
 
@@ -219,16 +263,22 @@ function playbackLoop() {
     while (playbackCCIndex < ccs.length && ccs[playbackCCIndex].tick <= state.playbackTick) {
         const e = ccs[playbackCCIndex];
         audioEngine.controllerChange(e.channel, e.controller, e.value);
+        if (typeof window.pulseProMidiOutControllerChange === 'function') {
+            window.pulseProMidiOutControllerChange(e.channel, e.controller, e.value);
+        }
         playbackCCIndex++;
     }
 
-    // Auto-scroll to keep playback head in view
-    const pbScreenX = state.playbackTick * SNAP_WIDTH - state.scrollX;
-    const margin = state.gridWidth * 0.15;
-    if (pbScreenX > state.gridWidth - margin) {
-        state.scrollX = state.playbackTick * SNAP_WIDTH - state.gridWidth + margin;
-    } else if (pbScreenX < margin) {
-        state.scrollX = Math.max(0, state.playbackTick * SNAP_WIDTH - margin);
+    if (state.verticalPianoRoll) {
+        state.verticalTimePanPx = 0;
+    } else {
+        const pbScreenX = state.playbackTick * SNAP_WIDTH - state.scrollX;
+        const margin = state.gridWidth * 0.15;
+        if (pbScreenX > state.gridWidth - margin) {
+            state.scrollX = state.playbackTick * SNAP_WIDTH - state.gridWidth + margin;
+        } else if (pbScreenX < margin) {
+            state.scrollX = Math.max(0, state.playbackTick * SNAP_WIDTH - margin);
+        }
     }
 
     renderAll();
@@ -254,7 +304,7 @@ function getPlaybackMaxTick() {
     } else {
         maxT = state.isRepeat ? getEndMeasureTick() : raw;
     }
-    if (state.midiRecordArmed && state.isPlaying) {
+    if (state.midiRecordArmed) {
         maxT = Math.max(maxT, Math.ceil(state.playbackTick));
     }
     return maxT;
@@ -268,21 +318,97 @@ function seekPlaybackToTick(tick) {
     let t = Math.max(0, tick);
     if (maxT > 0) t = Math.min(t, maxT);
     state.playbackTick = t;
+    if (state.verticalPianoRoll) {
+        state.verticalTimePanPx = 0;
+    }
     if (state.isPlaying) {
         state.playbackStartTick = t;
         state.playbackStartTime = performance.now();
         seekAutomationTo(t);
         audioEngine.allNotesOff();
+        if (typeof window.pulseProMidiOutAllNotesOff === 'function') {
+            window.pulseProMidiOutAllNotesOff();
+        }
         playbackActiveNotes.clear();
         state.playbackSoundingTracks.clear();
     } else {
         state.playbackStartTick = t;
+        if (typeof window.pulseProSyncPlayheadPreviewNotes === 'function') {
+            window.pulseProSyncPlayheadPreviewNotes();
+        }
     }
     renderAll();
 }
 
 window.getPlaybackMaxTick = getPlaybackMaxTick;
 window.seekPlaybackToTick = seekPlaybackToTick;
+
+/**
+ * While paused, match built-in synth + MIDI out to notes under the playhead (playhead scrub / vertical seek).
+ * Skips when playing — the playback loop owns note output.
+ */
+function pulseProSyncPlayheadPreviewNotes() {
+    if (state.isPlaying) return;
+    for (const [k] of [...audioEngine.activeNotes]) {
+        const p = k.split('-');
+        const ch = +p[0];
+        const nt = +p[1];
+        let shouldSound = false;
+        for (const n of state.notes) {
+            if (!isTrackAudible(n.track)) continue;
+            if (n.channel === ch && n.note === nt && n.startTick <= state.playbackTick
+                && n.startTick + n.durationTicks > state.playbackTick) {
+                shouldSound = true;
+                break;
+            }
+        }
+        if (!shouldSound) {
+            audioEngine.noteOff(nt, ch);
+            if (typeof window.pulseProMidiOutNoteOff === 'function') {
+                window.pulseProMidiOutNoteOff(nt, ch);
+            }
+        }
+    }
+    for (const n of state.notes) {
+        if (!isTrackAudible(n.track)) continue;
+        if (n.startTick <= state.playbackTick && n.startTick + n.durationTicks > state.playbackTick
+            && !audioEngine.activeNotes.has(`${n.channel}-${n.note}`)) {
+            const vel = n.velocity ?? 100;
+            audioEngine.noteOn(n.note, n.channel, vel);
+            if (typeof window.pulseProMidiOutNoteOn === 'function') {
+                window.pulseProMidiOutNoteOn(n.note, n.channel, vel);
+            }
+        }
+    }
+}
+
+window.pulseProSyncPlayheadPreviewNotes = pulseProSyncPlayheadPreviewNotes;
+
+/**
+ * Vertical piano roll: wheel moves the playhead (not while playing). Shift+wheel is reserved for pitch scroll.
+ * @param {number} deltaY
+ * @param {boolean} shiftKey
+ */
+function applyVerticalRollWheelToPlayhead(deltaY, shiftKey) {
+    if (state.isPlaying || shiftKey || deltaY === 0) return;
+    const lineTicks = TICKS_PER_SNAP;
+    const steps = Math.max(-120, Math.min(120, Math.round(-deltaY / 40)));
+    if (steps === 0) return;
+    let t = snapTickToGrid(state.playbackTick + steps * lineTicks);
+    const maxT = getPlaybackMaxTick();
+    t = Math.max(0, maxT > 0 ? Math.min(t, maxT) : t);
+    state.playbackTick = t;
+    state.playbackStartTick = t;
+    state.lastMousePlaybackTick = t;
+    if (state.verticalPianoRoll) {
+        state.verticalTimePanPx = 0;
+    }
+    if (typeof window.pulseProSyncPlayheadPreviewNotes === 'function') {
+        window.pulseProSyncPlayheadPreviewNotes();
+    }
+    renderAll();
+}
+window.applyVerticalRollWheelToPlayhead = applyVerticalRollWheelToPlayhead;
 
 // --- Library preview (hear saved MIDI without loading into the editor) ---
 const NOTE_END_TRIM_LIBRARY = 6;
@@ -332,6 +458,9 @@ function seekLibraryPreviewAutomation(tick, pbs, ccs, st) {
     for (const info of lastCC.values()) {
         audioEngine.controllerChange(info.channel, info.controller, info.value);
     }
+    if (typeof window.pulseProMidiOutAfterAutomationSeek === 'function') {
+        window.pulseProMidiOutAfterAutomationSeek(lastPB, lastCC);
+    }
 }
 
 function restoreEditorInstrumentsToAudioEngine() {
@@ -357,7 +486,13 @@ function stopLibraryPreview() {
     libraryPreviewCtx = null;
     audioEngine.allNotesOff();
     audioEngine.resetAllControllers();
+    if (typeof window.pulseProMidiOutFullSilence === 'function') {
+        window.pulseProMidiOutFullSilence();
+    }
     restoreEditorInstrumentsToAudioEngine();
+    if (typeof window.pulseProMidiOutSendProgramsFromAudioEngine === 'function') {
+        window.pulseProMidiOutSendProgramsFromAudioEngine();
+    }
     if (window.pulseProRefreshSongLibraryIfVisible) window.pulseProRefreshSongLibraryIfVisible();
 }
 
@@ -387,11 +522,17 @@ function libraryPreviewLoop() {
     for (const [id, info] of st.activeNotes) {
         if (!newActive.has(id)) {
             audioEngine.noteOff(info.note, info.channel);
+            if (typeof window.pulseProMidiOutNoteOff === 'function') {
+                window.pulseProMidiOutNoteOff(info.note, info.channel);
+            }
         }
     }
     for (const [id, info] of newActive) {
         if (!st.activeNotes.has(id)) {
             audioEngine.noteOn(info.note, info.channel, info.velocity);
+            if (typeof window.pulseProMidiOutNoteOn === 'function') {
+                window.pulseProMidiOutNoteOn(info.note, info.channel, info.velocity);
+            }
         }
     }
     st.activeNotes = newActive;
@@ -400,12 +541,18 @@ function libraryPreviewLoop() {
     while (st.pbIndex < pbs.length && pbs[st.pbIndex].tick <= playbackTick) {
         const e = pbs[st.pbIndex];
         audioEngine.pitchWheel(e.channel, e.value);
+        if (typeof window.pulseProMidiOutPitchWheel === 'function') {
+            window.pulseProMidiOutPitchWheel(e.channel, e.value);
+        }
         st.pbIndex++;
     }
     const ccs = st.controllerChanges;
     while (st.ccIndex < ccs.length && ccs[st.ccIndex].tick <= playbackTick) {
         const e = ccs[st.ccIndex];
         audioEngine.controllerChange(e.channel, e.controller, e.value);
+        if (typeof window.pulseProMidiOutControllerChange === 'function') {
+            window.pulseProMidiOutControllerChange(e.channel, e.controller, e.value);
+        }
         st.ccIndex++;
     }
 
@@ -456,6 +603,9 @@ function startLibraryPreview(arrayBuffer, songId) {
     }
     for (let ch = 0; ch < 16; ch++) {
         audioEngine.setInstrument(ch, chInstr[ch]);
+    }
+    if (typeof window.pulseProMidiOutSendProgramsFromArray === 'function') {
+        window.pulseProMidiOutSendProgramsFromArray(chInstr);
     }
 
     libraryPreviewCtx = {

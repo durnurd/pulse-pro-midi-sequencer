@@ -11,8 +11,21 @@ function midiRecordKey(midiChannel, note) {
     return midiChannel + '-' + note;
 }
 
-/** First track whose MIDI channel matches; otherwise active track. */
+/**
+ * Track used for recorded notes on a given MIDI channel.
+ * Prefer the active track when its channel matches (tracks 17+ often share ch 1–16 with track 1–16).
+ * Then the first non-hidden, non-locked track on that channel; finally any matching channel (legacy).
+ */
 function trackIndexForMidiChannel(midiCh) {
+    const at = state.activeTrack;
+    if (at >= 0 && at < state.tracks.length) {
+        const t = state.tracks[at];
+        if (t && t.channel === midiCh && !t.hidden && !t.locked) return at;
+    }
+    for (let i = 0; i < state.tracks.length; i++) {
+        const t = state.tracks[i];
+        if (t.channel === midiCh && !t.hidden && !t.locked) return i;
+    }
     for (let i = 0; i < state.tracks.length; i++) {
         if (state.tracks[i].channel === midiCh) return i;
     }
@@ -40,7 +53,8 @@ function finishRecordedNote(midiCh, note, endTickRaw) {
     if (!pending) return;
     pendingNoteOns.delete(k);
     const endT = Math.round(endTickRaw);
-    const dur = Math.max(TICKS_PER_SNAP, endT - pending.startTick);
+    // Duration from live playhead only; grid snap applies to piano-roll mouse edits, not MIDI input.
+    const dur = Math.max(1, endT - pending.startTick);
     ensureUndoForRecordSession();
     addNote(pending.note, pending.channel, pending.startTick, dur, pending.velocity, pending.trackIndex);
     renderAll();
@@ -57,7 +71,7 @@ function flushPendingRecordedNotes(endTickRaw) {
     pendingNoteOns.clear();
     let needRender = false;
     for (const [, pending] of entries) {
-        const dur = Math.max(TICKS_PER_SNAP, t - pending.startTick);
+        const dur = Math.max(1, t - pending.startTick);
         ensureUndoForRecordSession();
         addNote(pending.note, pending.channel, pending.startTick, dur, pending.velocity, pending.trackIndex);
         needRender = true;
@@ -65,12 +79,115 @@ function flushPendingRecordedNotes(endTickRaw) {
     if (needRender) renderAll();
 }
 
+/** True if notes/CC can be written for this device MIDI channel (same routing as notes). */
+function canRecordOnDeviceMidiChannel(midiCh) {
+    const outCh = remappedRecordChannel(midiCh);
+    const trk = trackIndexForMidiChannel(outCh);
+    const trkInfo = state.tracks[trk];
+    return !!(trkInfo && !trkInfo.locked && !trkInfo.hidden);
+}
+
+function sortControllerChangesRecorded() {
+    state.controllerChanges.sort((a, b) => a.tick - b.tick || a.channel - b.channel || a.controller - b.controller);
+}
+
+function sortPitchBendsRecorded() {
+    state.pitchBends.sort((a, b) => a.tick - b.tick || a.channel - b.channel);
+}
+
+/**
+ * Record a control change (e.g. sustain CC 64) onto the timeline and mirror to the synth.
+ * @param {number} midiCh 0–15 device channel
+ * @param {number} controller 0–127
+ * @param {number} value 0–127
+ */
+function insertRecordedCc(midiCh, controller, value) {
+    if (!canRecordOnDeviceMidiChannel(midiCh)) return;
+    if (controller < 0 || controller > 127) return;
+    const v = Math.max(0, Math.min(127, value | 0));
+    const outCh = remappedRecordChannel(midiCh);
+    const tick = Math.max(0, Math.round(state.playbackTick));
+    const ccs = state.controllerChanges;
+    for (let j = ccs.length - 1; j >= 0; j--) {
+        const e = ccs[j];
+        if (e.tick < tick) break;
+        if (e.tick === tick && e.channel === outCh && e.controller === controller && e.value === v) return;
+    }
+    ensureUndoForRecordSession();
+    ccs.push({ tick, channel: outCh, controller, value: v });
+    sortControllerChangesRecorded();
+    audioEngine.controllerChange(outCh, controller, v);
+    if (typeof window.pulseProMidiOutControllerChange === 'function') {
+        window.pulseProMidiOutControllerChange(outCh, controller, v);
+    }
+    if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+        window.playbackResyncAutomationIndicesAfterRecord();
+    }
+    renderAll();
+}
+
+/**
+ * Record 14-bit pitch bend (center 8192).
+ * @param {number} midiCh 0–15 device channel
+ * @param {number} value14 0–16383
+ */
+function insertRecordedPitchBend(midiCh, value14) {
+    if (!canRecordOnDeviceMidiChannel(midiCh)) return;
+    const outCh = remappedRecordChannel(midiCh);
+    const val = Math.max(0, Math.min(16383, value14 | 0));
+    const tick = Math.max(0, Math.round(state.playbackTick));
+    const pbs = state.pitchBends;
+    for (let j = pbs.length - 1; j >= 0; j--) {
+        const e = pbs[j];
+        if (e.tick < tick) break;
+        if (e.tick === tick && e.channel === outCh && e.value === val) return;
+    }
+    ensureUndoForRecordSession();
+    pbs.push({ tick, channel: outCh, value: val });
+    sortPitchBendsRecorded();
+    audioEngine.pitchWheel(outCh, val);
+    if (typeof window.pulseProMidiOutPitchWheel === 'function') {
+        window.pulseProMidiOutPitchWheel(outCh, val);
+    }
+    if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+        window.playbackResyncAutomationIndicesAfterRecord();
+    }
+    renderAll();
+}
+
+/**
+ * Update on-screen keyboard highlights from hardware note on/off (all channels).
+ * @param {Uint8Array} data
+ */
+function applyMidiKeyboardMonitorFromMessage(data) {
+    const status = data[0];
+    const cmd = status & 0xf0;
+    const a = data[1];
+    const b = data.length > 2 ? data[2] : 0;
+    if (cmd === 0x90) {
+        const note = a;
+        if (note < 0 || note > 127) return;
+        if (b === 0) {
+            state.midiInputHeldKeys.delete(note);
+        } else {
+            state.midiInputHeldKeys.add(note);
+        }
+        renderAll();
+    } else if (cmd === 0x80) {
+        const note = a;
+        if (note < 0 || note > 127) return;
+        state.midiInputHeldKeys.delete(note);
+        renderAll();
+    }
+}
+
 function startRecordedNote(midiCh, note, velocity) {
+    if (isKeySignatureActive(state.keySignature) && !midiNoteInKeySignature(note, state.keySignature)) return;
     const outCh = remappedRecordChannel(midiCh);
     const trk = trackIndexForMidiChannel(outCh);
     const trkInfo = state.tracks[trk];
     if (!trkInfo || trkInfo.locked || trkInfo.hidden) return;
-    const startTick = Math.max(0, snapTickToGrid(Math.round(state.playbackTick)));
+    const startTick = Math.max(0, Math.round(state.playbackTick));
     const k = midiRecordKey(midiCh, note);
     pendingNoteOns.set(k, {
         startTick,
@@ -85,6 +202,9 @@ function startRecordedNote(midiCh, note, velocity) {
 function handleMidiInputMessage(ev) {
     const data = ev.data;
     if (!data || data.length < 2) return;
+    if (state.midiKeyboardMonitor) {
+        applyMidiKeyboardMonitorFromMessage(data);
+    }
     if (!state.isPlaying || !state.midiRecordArmed) return;
 
     const status = data[0];
@@ -101,6 +221,12 @@ function handleMidiInputMessage(ev) {
         }
     } else if (cmd === 0x80) {
         finishRecordedNote(midiCh, a, state.playbackTick);
+    } else if (cmd === 0xb0) {
+        insertRecordedCc(midiCh, a, b);
+    } else if (cmd === 0xe0) {
+        const lsb = a;
+        const msb = data.length > 2 ? b : 0;
+        insertRecordedPitchBend(midiCh, (msb << 7) | lsb);
     }
 }
 
@@ -117,7 +243,7 @@ function detachAllMidiInputs() {
 }
 
 function attachAllMidiInputs() {
-    if (!midiAccess || !state.midiRecordArmed) return;
+    if (!midiAccess || (!state.midiRecordArmed && !state.midiKeyboardMonitor)) return;
     for (const input of midiAccess.inputs.values()) {
         if (attachedInputIds.has(input.id)) continue;
         input.onmidimessage = handleMidiInputMessage;
@@ -126,7 +252,7 @@ function attachAllMidiInputs() {
 }
 
 function onMidiAccessStateChange() {
-    if (state.midiRecordArmed) attachAllMidiInputs();
+    if (state.midiRecordArmed || state.midiKeyboardMonitor) attachAllMidiInputs();
 }
 
 async function ensureMidiAccess() {
@@ -202,24 +328,38 @@ function pulseProDrawMidiRecordLiveNotes(gridCtx, sx, sy, w, h, NOTE_RADIUS, NOT
     for (const p of pendingNoteOns.values()) {
         const trk = state.tracks[p.trackIndex];
         if (trk && trk.hidden) continue;
-        const row = TOTAL_MIDI_NOTES - 1 - p.note;
-        const endTick = Math.max(p.startTick + TICKS_PER_SNAP, playbackTick);
+        const endTick = Math.max(p.startTick + 1, playbackTick);
         const durationTicks = endTick - p.startTick;
-        const nx = p.startTick * SNAP_WIDTH - sx;
-        const ny = row * NOTE_HEIGHT - sy;
-        const nw = durationTicks * SNAP_WIDTH;
-        if (nx + nw < 0 || nx > w || ny + NOTE_HEIGHT < 0 || ny > h) continue;
+        let nx, ny, nw, nh;
+        if (state.verticalPianoRoll) {
+            const seamY = h - 1;
+            const pan = state.verticalTimePanPx;
+            const pb = playbackTick;
+            nx = p.note * NOTE_HEIGHT - state.scrollX;
+            const yBottom = seamY - (p.startTick - pb) * SNAP_WIDTH + pan;
+            const yTop = seamY - (p.startTick + durationTicks - pb) * SNAP_WIDTH + pan;
+            nw = NOTE_HEIGHT;
+            nh = yBottom - yTop;
+            ny = yTop;
+        } else {
+            const row = TOTAL_MIDI_NOTES - 1 - p.note;
+            nx = p.startTick * SNAP_WIDTH - sx;
+            ny = row * NOTE_HEIGHT - sy;
+            nw = durationTicks * SNAP_WIDTH;
+            nh = NOTE_HEIGHT;
+        }
+        if (nx + nw < 0 || nx > w || ny + nh < 0 || ny > h) continue;
 
         const vel = p.velocity;
         const velAlpha = 0.2 + 0.8 * (vel / 127);
         const color = getTrackColor(p.trackIndex);
-        const r = Math.max(0, Math.min(NOTE_RADIUS, (nw - 2) / 2, (NOTE_HEIGHT - 2) / 2));
+        const r = Math.max(0, Math.min(NOTE_RADIUS, (nw - 2) / 2, (nh - 2) / 2));
 
         gridCtx.save();
         gridCtx.fillStyle = color;
         gridCtx.globalAlpha = 0.45 * velAlpha;
         gridCtx.beginPath();
-        gridCtx.roundRect(nx + 1, ny + 1, nw - 2, NOTE_HEIGHT - 2, r);
+        gridCtx.roundRect(nx + 1, ny + 1, nw - 2, nh - 2, r);
         gridCtx.fill();
         gridCtx.globalAlpha = 0.95;
         gridCtx.strokeStyle = color;
@@ -227,17 +367,17 @@ function pulseProDrawMidiRecordLiveNotes(gridCtx, sx, sy, w, h, NOTE_RADIUS, NOT
         gridCtx.setLineDash([4, 3]);
         gridCtx.stroke();
         gridCtx.setLineDash([]);
-        if (nw > 20 && NOTE_HEIGHT >= 10) {
+        if (nw > 20 && nh >= 10) {
             gridCtx.globalAlpha = 0.9;
             gridCtx.fillStyle = currentTheme === 'dark' ? '#ffffff' : '#000000';
-            gridCtx.font = `${Math.min(10, NOTE_HEIGHT - 3)}px sans-serif`;
+            gridCtx.font = `${Math.min(10, Math.min(nw, nh) - 3)}px sans-serif`;
             gridCtx.textBaseline = 'middle';
             gridCtx.save();
             gridCtx.beginPath();
-            gridCtx.roundRect(nx + 1, ny + 1, nw - 2, NOTE_HEIGHT - 2, r);
+            gridCtx.roundRect(nx + 1, ny + 1, nw - 2, nh - 2, r);
             gridCtx.clip();
             const noteIsDrum = trk && trk.channel === 9;
-            gridCtx.fillText(midiNoteName(p.note, noteIsDrum), nx + 3, ny + NOTE_HEIGHT / 2);
+            gridCtx.fillText(midiNoteName(p.note, noteIsDrum), nx + 3, ny + nh / 2);
             gridCtx.restore();
         }
         gridCtx.restore();
@@ -258,6 +398,32 @@ function pulseProMidiRecordMergePlayingKeys(playingKeys) {
 }
 
 /**
+ * Enable or disable live MIDI input highlights on the keyboard; requests Web MIDI when enabling.
+ * @param {boolean} on
+ * @returns {Promise<void>}
+ */
+async function pulseProSetMidiKeyboardMonitor(on) {
+    const next = !!on;
+    if (!next) {
+        state.midiKeyboardMonitor = false;
+        state.midiInputHeldKeys.clear();
+        detachAllMidiInputs();
+        if (state.midiRecordArmed && midiAccess) attachAllMidiInputs();
+        renderAll();
+        return;
+    }
+    const ok = await ensureMidiAccess();
+    if (!ok) {
+        alert('Web MIDI is not available in this browser or access was denied. Use http://localhost or HTTPS.');
+        state.midiKeyboardMonitor = false;
+        return;
+    }
+    state.midiKeyboardMonitor = true;
+    attachAllMidiInputs();
+    renderAll();
+}
+
+/**
  * Arm or disarm MIDI recording; requests Web MIDI when arming.
  * @param {boolean} on
  * @returns {Promise<void>}
@@ -272,6 +438,7 @@ async function pulseProApplyMidiRecordArmed(on) {
             pendingNoteOns.clear();
         }
         pulseProUpdateMidiRecordButton();
+        if (state.midiKeyboardMonitor && midiAccess) attachAllMidiInputs();
         return;
     }
     const ok = await ensureMidiAccess();
@@ -290,6 +457,7 @@ window.pulseProMidiRecordOnPlaybackStart = pulseProMidiRecordOnPlaybackStart;
 window.pulseProMidiRecordFlushPending = pulseProMidiRecordFlushPending;
 window.pulseProUpdateMidiRecordButton = pulseProUpdateMidiRecordButton;
 window.pulseProApplyMidiRecordArmed = pulseProApplyMidiRecordArmed;
+window.pulseProSetMidiKeyboardMonitor = pulseProSetMidiKeyboardMonitor;
 window.pulseProMidiRecordMergePlaybackActive = pulseProMidiRecordMergePlaybackActive;
 window.pulseProDrawMidiRecordLiveNotes = pulseProDrawMidiRecordLiveNotes;
 window.pulseProMidiRecordMergePlayingKeys = pulseProMidiRecordMergePlayingKeys;

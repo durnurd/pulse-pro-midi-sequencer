@@ -6,26 +6,72 @@ let pbDrag = false, kcDragging = false, kcLastNote = -1;
 /** @type {null | { kind: string, origTick: number, bpm?: number, numerator?: number, denominator?: number, startClientX: number, moved: boolean }} */
 let conductorPbDrag = null;
 function noteFromY(gy) { return TOTAL_MIDI_NOTES - 1 - Math.floor(gy / NOTE_HEIGHT); }
+function noteFromKeyboardStripLocalX(lx) {
+    return Math.max(0, Math.min(TOTAL_MIDI_NOTES - 1, Math.floor((lx + state.scrollX) / NOTE_HEIGHT)));
+}
 
 // --- Keyboard panel: click and drag to preview notes ---
 kc.addEventListener('mousedown', function(e) {
-    audioEngine.init(); kcDragging = true;
-    const y = e.clientY - kc.getBoundingClientRect().top + state.scrollY;
-    const nn = noteFromY(y);
-    if (nn >= 0 && nn <= 127) { kcLastNote = nn; audioEngine.noteOn(nn, state.activeChannel); state.highlightedKeys.clear(); state.highlightedKeys.add(nn); renderAll(); }
+    audioEngine.init();
+    const r = kc.getBoundingClientRect();
+    const nn = state.verticalPianoRoll
+        ? noteFromKeyboardStripLocalX(e.clientX - r.left)
+        : noteFromY(e.clientY - r.top + state.scrollY);
+    if (nn < 0 || nn > 127) return;
+    if (!keyLockAllowsKeyboardPitch(nn, e.shiftKey, state.keySignature)) return;
+    kcDragging = true;
+    kcLastNote = nn;
+    audioEngine.noteOn(nn, state.activeChannel);
+    if (typeof window.pulseProMidiOutNoteOn === 'function') {
+        window.pulseProMidiOutNoteOn(nn, state.activeChannel, 100);
+    }
+    state.highlightedKeys.clear(); state.highlightedKeys.add(nn); renderAll();
 });
 document.addEventListener('mousemove', function(e) {
     if (!kcDragging) return;
-    const y = e.clientY - kc.getBoundingClientRect().top + state.scrollY;
-    const nn = noteFromY(y);
-    if (nn >= 0 && nn <= 127 && nn !== kcLastNote) {
-        if (kcLastNote >= 0) audioEngine.noteOff(kcLastNote, state.activeChannel);
-        kcLastNote = nn; audioEngine.noteOn(nn, state.activeChannel);
-        state.highlightedKeys.clear(); state.highlightedKeys.add(nn); renderAll();
+    const r = kc.getBoundingClientRect();
+    const nn = state.verticalPianoRoll
+        ? noteFromKeyboardStripLocalX(e.clientX - r.left)
+        : noteFromY(e.clientY - r.top + state.scrollY);
+    if (nn < 0 || nn > 127) return;
+    if (!keyLockAllowsKeyboardPitch(nn, e.shiftKey, state.keySignature)) {
+        if (kcLastNote >= 0) {
+            audioEngine.noteOff(kcLastNote, state.activeChannel);
+            if (typeof window.pulseProMidiOutNoteOff === 'function') {
+                window.pulseProMidiOutNoteOff(kcLastNote, state.activeChannel);
+            }
+            kcLastNote = -1;
+        }
+        state.highlightedKeys.clear();
+        renderAll();
+        return;
     }
+    if (nn === kcLastNote) return;
+    if (kcLastNote >= 0) {
+        audioEngine.noteOff(kcLastNote, state.activeChannel);
+        if (typeof window.pulseProMidiOutNoteOff === 'function') {
+            window.pulseProMidiOutNoteOff(kcLastNote, state.activeChannel);
+        }
+    }
+    kcLastNote = nn;
+    audioEngine.noteOn(nn, state.activeChannel);
+    if (typeof window.pulseProMidiOutNoteOn === 'function') {
+        window.pulseProMidiOutNoteOn(nn, state.activeChannel, 100);
+    }
+    state.highlightedKeys.clear(); state.highlightedKeys.add(nn); renderAll();
 });
 document.addEventListener('mouseup', function(e) {
-    if (kcDragging) { kcDragging = false; if (kcLastNote >= 0) { audioEngine.noteOff(kcLastNote, state.activeChannel); kcLastNote = -1; } state.highlightedKeys.clear(); renderAll(); }
+    if (kcDragging) {
+        kcDragging = false;
+        if (kcLastNote >= 0) {
+            audioEngine.noteOff(kcLastNote, state.activeChannel);
+            if (typeof window.pulseProMidiOutNoteOff === 'function') {
+                window.pulseProMidiOutNoteOff(kcLastNote, state.activeChannel);
+            }
+            kcLastNote = -1;
+        }
+        state.highlightedKeys.clear(); renderAll();
+    }
 });
 kc.addEventListener('wheel', function(e) {
     e.preventDefault();
@@ -34,56 +80,65 @@ kc.addEventListener('wheel', function(e) {
         return;
     }
     if (e.ctrlKey || e.metaKey) {
-        const mouseYInGrid = e.clientY - kc.getBoundingClientRect().top;
-        zoomVertical(e.deltaY, mouseYInGrid);
+        const r = kc.getBoundingClientRect();
+        const mouseAlongPitch = state.verticalPianoRoll ? (e.clientX - r.left) : (e.clientY - r.top);
+        zoomVertical(e.deltaY, mouseAlongPitch);
         return;
     }
-    state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight, state.scrollY + e.deltaY));
+    if (state.verticalPianoRoll) {
+        const maxPX = typeof getMaxPitchScrollPx === 'function' ? getMaxPitchScrollPx() : 0;
+        state.scrollX = Math.max(0, Math.min(maxPX, state.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0)));
+        if (typeof window.applyVerticalRollWheelToPlayhead === 'function') {
+            window.applyVerticalRollWheelToPlayhead(e.deltaY, e.shiftKey);
+        }
+        if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+    } else {
+        state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight, state.scrollY + e.deltaY));
+    }
     renderAll();
 }, { passive: false });
 
 // --- Playback header ---
 function setPbTick(e) {
     const r = pb.getBoundingClientRect();
-    state.playbackTick = Math.max(0, snapTick(e.clientX - r.left + state.scrollX));
+    let rawTick;
+    if (state.verticalPianoRoll) {
+        rawTick = playbackVerticalStripYToTick(e.clientY - r.top);
+    } else {
+        rawTick = (e.clientX - r.left + getPlaybackHeaderScrollPx()) / SNAP_WIDTH;
+    }
+    state.playbackTick = Math.max(0, snapTickToGrid(Math.round(rawTick)));
     state.lastMousePlaybackTick = state.playbackTick;
     if (!state.isPlaying) state.playbackStartTick = state.playbackTick;
 }
-function playAtPb() {
-    for (const n of state.notes) {
-        if (!isTrackAudible(n.track)) continue;
-        if (n.startTick <= state.playbackTick && n.startTick + n.durationTicks > state.playbackTick
-            && !audioEngine.activeNotes.has(`${n.channel}-${n.note}`))
-            audioEngine.noteOn(n.note, n.channel);
-    }
-}
-function stopOld() {
-    for (const [k] of audioEngine.activeNotes) {
-        const p = k.split('-'), ch = +p[0], nt = +p[1]; let s = false;
-        for (const n of state.notes) {
-            if (n.channel === ch && n.note === nt && n.startTick <= state.playbackTick
-                && n.startTick + n.durationTicks > state.playbackTick) { s = true; break; }
-        }
-        if (!s) audioEngine.noteOff(nt, ch);
+function syncPlayheadPreviewNotes() {
+    if (typeof window.pulseProSyncPlayheadPreviewNotes === 'function') {
+        window.pulseProSyncPlayheadPreviewNotes();
     }
 }
 pb.addEventListener('mousemove', function(e) {
     if (!state.conductorPlacementMode || state.conductor.locked) return;
-    const gx = e.clientX - pb.getBoundingClientRect().left + state.scrollX;
-    state.conductorPlacementHoverTick = Math.max(0, snapTick(gx));
+    const r = pb.getBoundingClientRect();
+    if (state.verticalPianoRoll) {
+        const raw = playbackVerticalStripYToTick(e.clientY - r.top);
+        state.conductorPlacementHoverTick = Math.max(0, snapTickToGrid(Math.round(raw)));
+    } else {
+        const gx = e.clientX - r.left + getPlaybackHeaderScrollPx();
+        state.conductorPlacementHoverTick = Math.max(0, snapTick(gx));
+    }
     renderAll();
 });
 
 pb.addEventListener('mousedown', function(e) {
     audioEngine.init();
     const r = pb.getBoundingClientRect();
-    const gx = e.clientX - r.left + state.scrollX;
-    const py = e.clientY - r.top;
+    const localX = e.clientX - r.left;
+    const localY = e.clientY - r.top;
 
     if (e.button === 2) {
         e.preventDefault();
         if (!state.conductor.locked && conductorTrackVisible()) {
-            const hit = pickConductorMarkerAtPlaybackHeader(gx, py);
+            const hit = pickConductorMarkerAtPlaybackHeader(localX, localY);
             if (hit) {
                 pushUndoState('delete conductor marker');
                 if (hit.kind === 'bpm') {
@@ -100,10 +155,11 @@ pb.addEventListener('mousedown', function(e) {
             }
         }
         if (typeof window.getSelection === 'function') window.getSelection().removeAllRanges();
+        if (state.verticalPianoRoll) return;
         pbDrag = true;
         if (state.isPlaying) stopPlayback();
         setPbTick(e);
-        playAtPb();
+        syncPlayheadPreviewNotes();
         renderAll();
         return;
     }
@@ -113,13 +169,16 @@ pb.addEventListener('mousedown', function(e) {
     if (state.conductorPlacementMode && !state.conductor.locked) {
         e.preventDefault();
         if (typeof window.openConductorValuePrompt === 'function') {
-            window.openConductorValuePrompt(Math.max(0, snapTick(gx)));
+            const raw = state.verticalPianoRoll
+                ? playbackVerticalStripYToTick(localY)
+                : (localX + getPlaybackHeaderScrollPx()) / SNAP_WIDTH;
+            window.openConductorValuePrompt(Math.max(0, snapTickToGrid(Math.round(raw))));
         }
         return;
     }
 
     if (!state.conductor.locked && conductorTrackVisible()) {
-        const hit = pickConductorMarkerAtPlaybackHeader(gx, py);
+        const hit = pickConductorMarkerAtPlaybackHeader(localX, localY);
         if (hit) {
             const ev = hit.kind === 'bpm'
                 ? state.tempoChanges.find(function(x) { return x.tick === hit.tick; })
@@ -133,6 +192,7 @@ pb.addEventListener('mousedown', function(e) {
                     numerator: hit.kind === 'ts' ? ev.numerator : undefined,
                     denominator: hit.kind === 'ts' ? ev.denominator : undefined,
                     startClientX: e.clientX,
+                    startClientY: e.clientY,
                     moved: false,
                 };
                 state.conductorMarkerDragPreview = {
@@ -148,10 +208,11 @@ pb.addEventListener('mousedown', function(e) {
 
     e.preventDefault();
     if (typeof window.getSelection === 'function') window.getSelection().removeAllRanges();
+    if (state.verticalPianoRoll) return;
     pbDrag = true;
     if (state.isPlaying) stopPlayback();
     setPbTick(e);
-    playAtPb();
+    syncPlayheadPreviewNotes();
     renderAll();
 });
 pb.addEventListener('contextmenu', function(e) { e.preventDefault(); });
@@ -159,9 +220,17 @@ document.addEventListener('mousemove', function(e) {
     if (conductorPbDrag) {
         e.preventDefault();
         const r = pb.getBoundingClientRect();
-        const gx = e.clientX - r.left + state.scrollX;
-        if (Math.abs(e.clientX - conductorPbDrag.startClientX) > 3) conductorPbDrag.moved = true;
-        const nt = Math.max(1, snapTick(gx));
+        const dx = e.clientX - conductorPbDrag.startClientX;
+        const dy = e.clientY - conductorPbDrag.startClientY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) conductorPbDrag.moved = true;
+        let nt;
+        if (state.verticalPianoRoll) {
+            const raw = playbackVerticalStripYToTick(e.clientY - r.top);
+            nt = Math.max(1, snapTickToGrid(Math.round(raw)));
+        } else {
+            const gx = e.clientX - r.left + getPlaybackHeaderScrollPx();
+            nt = Math.max(1, snapTick(gx));
+        }
         state.conductorMarkerDragPreview = {
             kind: conductorPbDrag.kind,
             origTick: conductorPbDrag.origTick,
@@ -172,7 +241,9 @@ document.addEventListener('mousemove', function(e) {
     }
     if (!pbDrag) return;
     e.preventDefault();
-    setPbTick(e); stopOld(); playAtPb(); renderAll();
+    setPbTick(e);
+    syncPlayheadPreviewNotes();
+    renderAll();
 });
 document.addEventListener('mouseup', function(e) {
     if (conductorPbDrag) {
@@ -210,22 +281,36 @@ document.addEventListener('mouseup', function(e) {
     if (pbDrag) {
         pbDrag = false;
         if (typeof window.getSelection === 'function') window.getSelection().removeAllRanges();
-        audioEngine.allNotesOff(); state.playbackStartTick = state.playbackTick; renderAll();
+        audioEngine.allNotesOff();
+        if (typeof window.pulseProMidiOutAllNotesOff === 'function') {
+            window.pulseProMidiOutAllNotesOff();
+        }
+        state.playbackStartTick = state.playbackTick; renderAll();
     }
 });
 pb.addEventListener('wheel', function(e) {
     e.preventDefault();
+    const r = pb.getBoundingClientRect();
     if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
-        const mouseXInGrid = e.clientX - pb.getBoundingClientRect().left;
-        zoomHorizontal(e.deltaY, mouseXInGrid);
+        const mouseAnchor = state.verticalPianoRoll ? (e.clientY - r.top) : (e.clientX - r.left);
+        zoomHorizontal(e.deltaY, mouseAnchor);
         return;
     }
     if (e.ctrlKey || e.metaKey) {
-        // Zoom vertically even when hovering the playback header
         zoomVertical(e.deltaY, undefined);
         return;
     }
-    state.scrollX = Math.max(0, state.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0));
+    if (state.verticalPianoRoll) {
+        state.timelineHeaderScrollPx = Math.max(0, Math.min(
+            Math.max(0, typeof getMaxScrollX === 'function' ? getMaxScrollX() : 0),
+            state.timelineHeaderScrollPx + e.deltaX + (e.shiftKey ? e.deltaY : 0)));
+        if (typeof window.applyVerticalRollWheelToPlayhead === 'function') {
+            window.applyVerticalRollWheelToPlayhead(e.deltaY, e.shiftKey);
+        }
+        if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+    } else {
+        state.scrollX = Math.max(0, state.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0));
+    }
     renderAll();
 }, { passive: false });
 

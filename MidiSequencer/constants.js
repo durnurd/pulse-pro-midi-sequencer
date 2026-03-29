@@ -33,6 +33,8 @@ const SNAP_DIVISION = MIDI_TPQN; // ticks per beat (used by grid/measure math)
 let SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN; // pixels per tick
 const KEYBOARD_WIDTH = 120;
 const PLAYBACK_HEADER_HEIGHT = 28;
+/** Width of the time ruler when vertical piano roll is on (left strip, matches grid time axis). */
+const VERTICAL_PLAYBACK_STRIP_WIDTH = 52;
 const TOTAL_MIDI_NOTES = 128; // MIDI notes 0-127
 let TOTAL_HEIGHT = TOTAL_MIDI_NOTES * NOTE_HEIGHT;
 
@@ -44,16 +46,26 @@ function zoomVertical(delta, mouseYInGrid) {
     NOTE_HEIGHT = Math.max(NOTE_HEIGHT_MIN, Math.min(NOTE_HEIGHT_MAX, Math.round(NOTE_HEIGHT * factor)));
     if (NOTE_HEIGHT === oldNoteHeight) return;
     TOTAL_HEIGHT = TOTAL_MIDI_NOTES * NOTE_HEIGHT;
-    // Adjust scrollY so the note row under the mouse stays in place
-    if (mouseYInGrid !== undefined) {
-        const noteUnderMouse = (state.scrollY + mouseYInGrid) / oldNoteHeight;
-        state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight,
-            noteUnderMouse * NOTE_HEIGHT - mouseYInGrid));
+    if (state.verticalPianoRoll) {
+        if (mouseYInGrid !== undefined) {
+            const noteUnderMouse = (state.scrollX + mouseYInGrid) / oldNoteHeight;
+            const maxPX = Math.max(0, TOTAL_MIDI_NOTES * NOTE_HEIGHT - state.gridWidth);
+            state.scrollX = Math.max(0, Math.min(maxPX, noteUnderMouse * NOTE_HEIGHT - mouseYInGrid));
+        } else {
+            const centerNote = (state.scrollX + state.gridWidth / 2) / oldNoteHeight;
+            const maxPX = Math.max(0, TOTAL_MIDI_NOTES * NOTE_HEIGHT - state.gridWidth);
+            state.scrollX = Math.max(0, Math.min(maxPX, centerNote * NOTE_HEIGHT - state.gridWidth / 2));
+        }
     } else {
-        // Keep centered
-        const centerNote = (state.scrollY + state.gridHeight / 2) / oldNoteHeight;
-        state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight,
-            centerNote * NOTE_HEIGHT - state.gridHeight / 2));
+        if (mouseYInGrid !== undefined) {
+            const noteUnderMouse = (state.scrollY + mouseYInGrid) / oldNoteHeight;
+            state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight,
+                noteUnderMouse * NOTE_HEIGHT - mouseYInGrid));
+        } else {
+            const centerNote = (state.scrollY + state.gridHeight / 2) / oldNoteHeight;
+            state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight,
+                centerNote * NOTE_HEIGHT - state.gridHeight / 2));
+        }
     }
     renderAll();
 }
@@ -64,13 +76,33 @@ function zoomHorizontal(delta, mouseXInGrid) {
     BEAT_WIDTH = Math.max(BEAT_WIDTH_MIN, Math.min(BEAT_WIDTH_MAX, BEAT_WIDTH * factor));
     if (BEAT_WIDTH === oldBeatWidth) return;
     SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN;
-    // Adjust scrollX so the tick under the mouse stays in place
-    if (mouseXInGrid !== undefined) {
-        const tickUnderMouse = (state.scrollX + mouseXInGrid) / (oldBeatWidth / MIDI_TPQN);
-        state.scrollX = Math.max(0, tickUnderMouse * SNAP_WIDTH - mouseXInGrid);
+    if (state.verticalPianoRoll) {
+        const h = state.gridHeight;
+        const seamY = h - 1;
+        const pan = state.verticalTimePanPx;
+        const pb = state.playbackTick;
+        const oldSW = oldBeatWidth / MIDI_TPQN;
+        const ly = mouseXInGrid !== undefined ? mouseXInGrid : h / 2;
+        const tickUnderMouse = pb + (seamY - ly + pan) / oldSW;
+        state.verticalTimePanPx = 0;
+        let newPb = tickUnderMouse - (seamY - ly) / SNAP_WIDTH;
+        newPb = snapTickToGrid(Math.round(newPb));
+        if (typeof window.seekPlaybackToTick === 'function') {
+            window.seekPlaybackToTick(Math.max(0, newPb));
+        } else {
+            state.playbackTick = Math.max(0, newPb);
+            state.playbackStartTick = state.playbackTick;
+        }
+        const maxHS = Math.max(0, typeof getMaxScrollX === 'function' ? getMaxScrollX() : 0);
+        state.timelineHeaderScrollPx = Math.max(0, Math.min(maxHS, state.timelineHeaderScrollPx));
     } else {
-        const centerTick = (state.scrollX + state.gridWidth / 2) / (oldBeatWidth / MIDI_TPQN);
-        state.scrollX = Math.max(0, centerTick * SNAP_WIDTH - state.gridWidth / 2);
+        if (mouseXInGrid !== undefined) {
+            const tickUnderMouse = (state.scrollX + mouseXInGrid) / (oldBeatWidth / MIDI_TPQN);
+            state.scrollX = Math.max(0, tickUnderMouse * SNAP_WIDTH - mouseXInGrid);
+        } else {
+            const centerTick = (state.scrollX + state.gridWidth / 2) / (oldBeatWidth / MIDI_TPQN);
+            state.scrollX = Math.max(0, centerTick * SNAP_WIDTH - state.gridWidth / 2);
+        }
     }
     renderAll();
 }
@@ -221,6 +253,8 @@ const THEMES = {
         pbBarLine: '#444',
         pbBeatLine: '#333',
         pbHandle: '#e94560',
+        keyLockRowOverlay: 'rgba(72, 52, 118, 0.78)',
+        keyLockRowHatch: 'rgba(255, 255, 255, 0.14)',
     },
     light: {
         // Grid
@@ -251,6 +285,8 @@ const THEMES = {
         pbBarLine: '#999',
         pbBeatLine: '#bbb',
         pbHandle: '#d6304a',
+        keyLockRowOverlay: 'rgba(165, 145, 210, 0.88)',
+        keyLockRowHatch: 'rgba(55, 40, 95, 0.28)',
     }
 };
 

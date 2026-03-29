@@ -1,5 +1,7 @@
 // main.js - Initialization
 (function() {
+    const KEY_SIGNATURE_STORAGE_KEY = 'pulsepro-key-signature';
+
     /** Remove focus from a control so Space triggers transport instead of re-activating the widget. */
     function blurIfActive(el) {
         if (el && document.activeElement === el) el.blur();
@@ -412,6 +414,9 @@
                     }
                 }
                 audioEngine.setInstrument(ch, val);
+                if (typeof window.pulseProMidiOutProgramChange === 'function') {
+                    window.pulseProMidiOutProgramChange(ch, val);
+                }
             }; })(ti));
             if (trk.channel === 9) {
                 instrWrap.style.visibility = 'hidden';
@@ -864,6 +869,9 @@
         for (let ch = 0; ch < 16; ch++) {
             audioEngine.setInstrument(ch, chInstr[ch]);
         }
+        if (typeof window.pulseProMidiOutSendProgramsFromAudioEngine === 'function') {
+            window.pulseProMidiOutSendProgramsFromAudioEngine();
+        }
     }
 
     window.afterUndoRedoRestore = function() {
@@ -954,6 +962,9 @@
         state.tracks = createDefaultTracks();
         setActiveTrack(0);
         for (let ch = 0; ch < 16; ch++) audioEngine.setInstrument(ch, 0);
+        if (typeof window.pulseProMidiOutSendProgramsFromAudioEngine === 'function') {
+            window.pulseProMidiOutSendProgramsFromAudioEngine();
+        }
 
         // Reset automation overlay and collapse automation editor strip
         state.automationExpandedHeightPx = 168;
@@ -980,6 +991,17 @@
         // Reset scroll position
         state.scrollX = 0;
         state.scrollY = TOTAL_HEIGHT / 2 - 300;
+        state.verticalPianoRoll = false;
+        state.verticalTimePanPx = 0;
+        state.timelineHeaderScrollPx = 0;
+        _layoutSavedScrollYForVertical = null;
+        const seqReset = document.getElementById('sequencer-container');
+        if (seqReset) seqReset.classList.remove('layout-vertical');
+        try { localStorage.removeItem('pulsepro-vertical-piano-roll'); } catch (e2) { /* ignore */ }
+        state.keySignature = null;
+        try { localStorage.removeItem(KEY_SIGNATURE_STORAGE_KEY); } catch (e3) { /* ignore */ }
+        updateVerticalRollMenuCheck();
+        updateKeySignatureMenuChecks();
 
         // Reset interaction state
         state.mode = 'idle';
@@ -1068,6 +1090,114 @@
         updateEditMenuUndoRedoLabels();
     });
 
+    function updateVerticalRollMenuCheck() {
+        const el = document.getElementById('vertical-roll-check');
+        if (!el) return;
+        el.classList.toggle('checked', !!state.verticalPianoRoll);
+    }
+
+    function updateMidiKeyboardMonitorMenuCheck() {
+        const el = document.getElementById('midi-keyboard-monitor-check');
+        if (!el) return;
+        el.classList.toggle('checked', !!state.midiKeyboardMonitor);
+    }
+
+    function populateKeySignaturePanel() {
+        const panel = document.getElementById('key-signature-panel');
+        if (!panel || panel.dataset.pulseproPopulated) return;
+        panel.dataset.pulseproPopulated = '1';
+        const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        function addRow(label, ks) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('role', 'menuitem');
+            const check = document.createElement('span');
+            check.className = 'menu-check key-sig-menu-check';
+            check.textContent = '✓';
+            check.setAttribute('aria-hidden', 'true');
+            b.appendChild(check);
+            b.appendChild(document.createTextNode(' ' + label));
+            b.addEventListener('click', function(e) {
+                e.stopPropagation();
+                setKeySignature(ks);
+                closeAllDropdowns();
+            });
+            panel.appendChild(b);
+        }
+        addRow('None (chromatic)', null);
+        for (let r = 0; r < 12; r++) {
+            addRow(names[r] + ' major', { root: r, mode: 'major' });
+        }
+        for (let r = 0; r < 12; r++) {
+            addRow(names[r] + ' minor', { root: r, mode: 'minor' });
+        }
+    }
+
+    function updateKeySignatureMenuChecks() {
+        const panel = document.getElementById('key-signature-panel');
+        if (!panel) return;
+        const buttons = panel.querySelectorAll('button');
+        for (let idx = 0; idx < buttons.length; idx++) {
+            const check = buttons[idx].querySelector('.key-sig-menu-check');
+            if (!check) continue;
+            let on = false;
+            if (idx === 0) {
+                on = !isKeySignatureActive(state.keySignature);
+            } else if (idx <= 12) {
+                const r = idx - 1;
+                on = isKeySignatureActive(state.keySignature) &&
+                    state.keySignature.root === r && state.keySignature.mode === 'major';
+            } else {
+                const r = idx - 13;
+                on = isKeySignatureActive(state.keySignature) &&
+                    state.keySignature.root === r && state.keySignature.mode === 'minor';
+            }
+            check.classList.toggle('checked', on);
+        }
+    }
+
+    function setKeySignature(ks) {
+        if (ks == null) {
+            state.keySignature = null;
+        } else {
+            const r = ((ks.root % 12) + 12) % 12;
+            const m = ks.mode === 'minor' ? 'minor' : 'major';
+            state.keySignature = { root: r, mode: m };
+        }
+        try {
+            if (state.keySignature) {
+                localStorage.setItem(KEY_SIGNATURE_STORAGE_KEY, JSON.stringify(state.keySignature));
+            } else {
+                localStorage.removeItem(KEY_SIGNATURE_STORAGE_KEY);
+            }
+        } catch (err) { /* ignore */ }
+        updateKeySignatureMenuChecks();
+        renderAll();
+    }
+    window.setKeySignature = setKeySignature;
+
+    function loadKeySignatureFromStorage() {
+        try {
+            const raw = localStorage.getItem(KEY_SIGNATURE_STORAGE_KEY);
+            if (!raw) {
+                updateKeySignatureMenuChecks();
+                return;
+            }
+            const o = JSON.parse(raw);
+            if (o && typeof o.root === 'number' && (o.mode === 'major' || o.mode === 'minor')) {
+                state.keySignature = { root: ((o.root % 12) + 12) % 12, mode: o.mode };
+            }
+        } catch (e) { /* ignore */ }
+        updateKeySignatureMenuChecks();
+    }
+
+    const btnKeySigMenu = document.getElementById('btn-key-signature-menu');
+    if (btnKeySigMenu) {
+        btnKeySigMenu.addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+    }
+
     const btnViewMenu = document.getElementById('btn-view-menu');
     const viewDropdown = document.getElementById('view-dropdown');
     if (btnViewMenu && viewDropdown) {
@@ -1075,12 +1205,22 @@
             e.stopPropagation();
             const wasOpen = viewDropdown.parentElement.classList.contains('show');
             closeAllDropdowns();
-            if (!wasOpen) viewDropdown.parentElement.classList.add('show');
+            if (!wasOpen) {
+                viewDropdown.parentElement.classList.add('show');
+                populateKeySignaturePanel();
+                updateVerticalRollMenuCheck();
+                updateMidiKeyboardMonitorMenuCheck();
+                updateKeySignatureMenuChecks();
+            }
         });
         btnViewMenu.addEventListener('mouseenter', function() {
             if (isAnyMenuOpen() && !viewDropdown.parentElement.classList.contains('show')) {
                 closeAllDropdowns();
                 viewDropdown.parentElement.classList.add('show');
+                populateKeySignaturePanel();
+                updateVerticalRollMenuCheck();
+                updateMidiKeyboardMonitorMenuCheck();
+                updateKeySignatureMenuChecks();
             }
         });
     }
@@ -1345,9 +1485,15 @@
         SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN;
         resizeCanvases();
         clampScrollToViewport();
-        state.scrollX = 0;
-        const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
-        state.scrollY = Math.max(0, Math.min(maxSY, (TOTAL_HEIGHT - state.gridHeight) / 2));
+        if (state.verticalPianoRoll) {
+            state.scrollX = 0;
+            state.verticalTimePanPx = 0;
+            state.timelineHeaderScrollPx = 0;
+        } else {
+            state.scrollX = 0;
+            const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
+            state.scrollY = Math.max(0, Math.min(maxSY, (TOTAL_HEIGHT - state.gridHeight) / 2));
+        }
         renderAll();
     }
 
@@ -1366,9 +1512,15 @@
         SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN;
         resizeCanvases();
         clampScrollToViewport();
-        state.scrollX = 0;
-        const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
-        state.scrollY = Math.max(0, Math.min(maxSY, (TOTAL_HEIGHT - state.gridHeight) / 2));
+        if (state.verticalPianoRoll) {
+            state.scrollX = 0;
+            state.verticalTimePanPx = 0;
+            state.timelineHeaderScrollPx = 0;
+        } else {
+            state.scrollX = 0;
+            const maxSY = Math.max(0, TOTAL_HEIGHT - state.gridHeight);
+            state.scrollY = Math.max(0, Math.min(maxSY, (TOTAL_HEIGHT - state.gridHeight) / 2));
+        }
         renderAll();
     }
 
@@ -1408,6 +1560,105 @@
         });
     }
 
+    const VERTICAL_ROLL_STORAGE_KEY = 'pulsepro-vertical-piano-roll';
+    const MIDI_KEYBOARD_MONITOR_STORAGE_KEY = 'pulsepro-midi-keyboard-monitor';
+    let _layoutSavedScrollYForVertical = null;
+
+    function applySequencerLayoutClass() {
+        const seq = document.getElementById('sequencer-container');
+        if (seq) seq.classList.toggle('layout-vertical', !!state.verticalPianoRoll);
+        if (typeof resizeCanvases === 'function') resizeCanvases();
+        if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+        if (typeof window.pulseProSyncAeExpandButtonVisibility === 'function') {
+            window.pulseProSyncAeExpandButtonVisibility();
+        }
+    }
+
+    function setVerticalPianoRoll(on) {
+        const next = !!on;
+        if (next === !!state.verticalPianoRoll) {
+            updateVerticalRollMenuCheck();
+            return;
+        }
+        if (next) {
+            _layoutSavedScrollYForVertical = state.scrollY;
+            state.timelineHeaderScrollPx = state.scrollX;
+            state.verticalTimePanPx = 0;
+            state.verticalPianoRoll = true;
+            applySequencerLayoutClass();
+            const maxPX = typeof getMaxPitchScrollPx === 'function' ? getMaxPitchScrollPx() : 0;
+            state.scrollX = Math.max(0, Math.min(maxPX, 60 * NOTE_HEIGHT - state.gridWidth / 2));
+            if (typeof window.aeSetAutomationEditorExpanded === 'function') {
+                window.aeSetAutomationEditorExpanded(false);
+            }
+        } else {
+            state.verticalPianoRoll = false;
+            state.scrollX = state.timelineHeaderScrollPx;
+            state.scrollY = _layoutSavedScrollYForVertical != null
+                ? _layoutSavedScrollYForVertical
+                : Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight, TOTAL_HEIGHT / 2 - 300));
+            state.timelineHeaderScrollPx = 0;
+            state.verticalTimePanPx = 0;
+            _layoutSavedScrollYForVertical = null;
+            applySequencerLayoutClass();
+        }
+        try {
+            localStorage.setItem(VERTICAL_ROLL_STORAGE_KEY, state.verticalPianoRoll ? '1' : '0');
+        } catch (err) { /* ignore */ }
+        updateVerticalRollMenuCheck();
+        renderAll();
+    }
+    window.setVerticalPianoRoll = setVerticalPianoRoll;
+
+    const btnViewVerticalRoll = document.getElementById('btn-view-vertical-roll');
+    if (btnViewVerticalRoll) {
+        btnViewVerticalRoll.addEventListener('click', function() {
+            blurIfActive(this);
+            setVerticalPianoRoll(!state.verticalPianoRoll);
+        });
+    }
+
+    const btnViewMidiKeyboardMonitor = document.getElementById('btn-view-midi-keyboard-monitor');
+    if (btnViewMidiKeyboardMonitor && typeof window.pulseProSetMidiKeyboardMonitor === 'function') {
+        btnViewMidiKeyboardMonitor.addEventListener('click', async function() {
+            blurIfActive(this);
+            const wantOn = !state.midiKeyboardMonitor;
+            await window.pulseProSetMidiKeyboardMonitor(wantOn);
+            try {
+                localStorage.setItem(MIDI_KEYBOARD_MONITOR_STORAGE_KEY, state.midiKeyboardMonitor ? '1' : '0');
+            } catch (err) { /* ignore */ }
+            updateMidiKeyboardMonitorMenuCheck();
+        });
+    }
+
+    try {
+        if (localStorage.getItem(VERTICAL_ROLL_STORAGE_KEY) === '1') {
+            setVerticalPianoRoll(true);
+        } else {
+            updateVerticalRollMenuCheck();
+        }
+    } catch (e) {
+        updateVerticalRollMenuCheck();
+    }
+
+    try {
+        if (localStorage.getItem(MIDI_KEYBOARD_MONITOR_STORAGE_KEY) === '1' && typeof window.pulseProSetMidiKeyboardMonitor === 'function') {
+            void window.pulseProSetMidiKeyboardMonitor(true).then(function() {
+                try {
+                    localStorage.setItem(MIDI_KEYBOARD_MONITOR_STORAGE_KEY, state.midiKeyboardMonitor ? '1' : '0');
+                } catch (e3) { /* ignore */ }
+                updateMidiKeyboardMonitorMenuCheck();
+            });
+        } else {
+            updateMidiKeyboardMonitorMenuCheck();
+        }
+    } catch (e2) {
+        updateMidiKeyboardMonitorMenuCheck();
+    }
+
+    populateKeySignaturePanel();
+    loadKeySignatureFromStorage();
+
     // Automation overlay dropdown
     const autoOverlaySelect = document.getElementById('automation-overlay-select');
     autoOverlaySelect.addEventListener('change', function() {
@@ -1420,6 +1671,34 @@
         soundfontSelect.addEventListener('change', function() {
             blurIfActive(this);
         });
+    }
+
+    const midiOutputSelect = document.getElementById('midi-output-select');
+    if (midiOutputSelect && typeof window.pulseProEnsureMidiOutputAccess === 'function') {
+        async function refreshMidiOutUi() {
+            const ok = await window.pulseProEnsureMidiOutputAccess();
+            if (ok && typeof window.pulseProRefreshMidiOutputSelect === 'function') {
+                window.pulseProRefreshMidiOutputSelect(midiOutputSelect);
+            } else {
+                midiOutputSelect.innerHTML = '';
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = ok ? 'Off (built-in only)' : 'Web MIDI unavailable';
+                midiOutputSelect.appendChild(opt);
+                if (typeof window.pulseProSetMidiOutputId === 'function') {
+                    window.pulseProSetMidiOutputId('', midiOutputSelect);
+                }
+            }
+        }
+        midiOutputSelect.addEventListener('focus', function() { void refreshMidiOutUi(); });
+        midiOutputSelect.addEventListener('mousedown', function() { void refreshMidiOutUi(); });
+        midiOutputSelect.addEventListener('change', function() {
+            blurIfActive(this);
+            if (typeof window.pulseProSetMidiOutputId === 'function') {
+                window.pulseProSetMidiOutputId(this.value, midiOutputSelect);
+            }
+        });
+        void refreshMidiOutUi();
     }
 
     if (window.pulseProInitSongLibrary) window.pulseProInitSongLibrary();

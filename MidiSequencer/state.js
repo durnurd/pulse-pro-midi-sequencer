@@ -4,6 +4,13 @@ const state = {
     scrollX: 0,
     scrollY: TOTAL_HEIGHT / 2 - 300, // start roughly at middle C area
 
+    /** Piano roll timeline runs bottom→top; keyboard strip along bottom; playhead on grid bottom edge. */
+    verticalPianoRoll: false,
+    /** Vertical layout: Y offset (px) so user can browse time while paused; zeroed during playback. */
+    verticalTimePanPx: 0,
+    /** Vertical layout: horizontal scroll for playback header (time axis); grid pitch uses scrollX. */
+    timelineHeaderScrollPx: 0,
+
     // Notes: array of {id, note, channel, track, startTick, durationTicks, velocity}
     // channel = MIDI channel (0-15) for audio output
     // track = index into state.tracks[] for UI grouping/color
@@ -29,6 +36,8 @@ const state = {
     isRepeat: false,
     /** When true, MIDI note on/off from hardware is written to the piano roll during playback. */
     midiRecordArmed: false,
+    /** When true, Web MIDI note on/off lights matching keys on the on-screen keyboard (View menu). */
+    midiKeyboardMonitor: false,
     playbackStartTime: 0,
     playbackStartTick: 0,
     /** Last playhead tick set by clicking/dragging the playback header (restore after natural end when repeat is off). */
@@ -59,6 +68,9 @@ const state = {
     // Grid snap: 0 = quarter … 5 = 128th; -1 = none (see setSnapGridPower)
     snapGridPower: 2,
 
+    /** null = chromatic; { root: 0–11 (C=0), mode: 'major' | 'minor' } limits placement / vertical drags (Shift overrides) */
+    keySignature: null,
+
     // Undo/Redo
     undoStack: [],
     redoStack: [],
@@ -68,6 +80,8 @@ const state = {
 
     // Active/highlighted keyboard notes (Set of MIDI note numbers)
     highlightedKeys: new Set(),
+    /** Keys currently held on a MIDI controller when midiKeyboardMonitor is on (0–127). */
+    midiInputHeldKeys: new Set(),
 
     // Interaction mode
     mode: 'idle', // idle, placing, resizing-left, resizing-right, moving, selecting, dragging-playback, pencil-drawing, erasing
@@ -238,6 +252,44 @@ function clearAllNotes() {
     reassignTrackColors();
 }
 
+/**
+ * Map grid canvas local coords to unified world space (time px on X, pitch row px on Y).
+ * @param {number} lx
+ * @param {number} ly
+ * @returns {{ x: number, y: number }}
+ */
+function gridPointerToWorld(lx, ly) {
+    if (!state.verticalPianoRoll) {
+        return { x: lx + state.scrollX, y: ly + state.scrollY };
+    }
+    const noteCol = Math.max(0, Math.min(TOTAL_MIDI_NOTES - 1, Math.floor((lx + state.scrollX) / NOTE_HEIGHT)));
+    const row = TOTAL_MIDI_NOTES - 1 - noteCol;
+    const seamY = state.gridHeight - 1;
+    const tickFloat = state.playbackTick + (seamY - ly + state.verticalTimePanPx) / SNAP_WIDTH;
+    return { x: tickFloat * SNAP_WIDTH, y: row * NOTE_HEIGHT };
+}
+
+function isVerticalPianoRoll() {
+    return !!state.verticalPianoRoll;
+}
+
+function getPlaybackHeaderScrollPx() {
+    return state.verticalPianoRoll ? state.timelineHeaderScrollPx : state.scrollX;
+}
+
+/**
+ * Map a Y coordinate on the vertical playback strip canvas to a raw tick (same geometry as the grid).
+ * @param {number} localY
+ * @returns {number}
+ */
+function playbackVerticalStripYToTick(localY) {
+    const h = state.gridHeight;
+    const seamY = h - 1;
+    const pan = state.verticalTimePanPx;
+    const pb = state.playbackTick;
+    return pb + (seamY - localY + pan) / SNAP_WIDTH;
+}
+
 function getNoteAt(x, y) {
     // x, y in grid-space (with scroll applied)
     const tick = x / SNAP_WIDTH;
@@ -325,6 +377,7 @@ function _makeSnapshot() {
         conductor: { ...state.conductor },
         snapGridPower: state.snapGridPower,
         activeTrack: state.activeTrack,
+        keySignature: state.keySignature ? { root: state.keySignature.root, mode: state.keySignature.mode } : null,
     });
 }
 function _restoreSnapshot(json) {
@@ -351,6 +404,12 @@ function _restoreSnapshot(json) {
     state.snapGridPower = setSnapGridPower(sgp);
     if (typeof snap.activeTrack === 'number' && snap.activeTrack >= 0 && snap.activeTrack < state.tracks.length) {
         setActiveTrack(snap.activeTrack);
+    }
+    if (snap.keySignature && typeof snap.keySignature.root === 'number' &&
+        (snap.keySignature.mode === 'major' || snap.keySignature.mode === 'minor')) {
+        state.keySignature = { root: snap.keySignature.root % 12, mode: snap.keySignature.mode };
+    } else {
+        state.keySignature = null;
     }
     state.selectedNoteIds.clear();
     if (state.notes.length > 0) state.nextNoteId = Math.max(...state.notes.map(n => n.id)) + 1;
@@ -501,7 +560,11 @@ async function pasteNotes() {
         // Use the channel of the destination track
         const ch = state.tracks[trk].channel;
         
-        const n = addNote(c.note, ch, Math.round(baseTick) + c.startTickOffset, c.durationTicks, c.velocity ?? 100, trk);
+        let pasteNote = c.note;
+        if (isKeySignatureActive(state.keySignature)) {
+            pasteNote = snapMidiNoteToKey(pasteNote, state.keySignature);
+        }
+        const n = addNote(pasteNote, ch, Math.round(baseTick) + c.startTickOffset, c.durationTicks, c.velocity ?? 100, trk);
         state.selectedNoteIds.add(n.id);
         const end = n.startTick + n.durationTicks;
         if (end > maxEndTick) maxEndTick = end;
@@ -644,15 +707,46 @@ function tickFromWallSeconds(wallSec) {
 
 /**
  * Hit test conductor markers on the playback header (uses Y to separate BPM vs TS when both share a tick).
- * @param {number} gx Grid-space x (includes scroll)
+ * @param {number} localX X within the playback header canvas (horizontal mode: add scroll via caller)
  * @param {number} localY Y within the playback header canvas (0 = top)
  * @returns {{ kind: 'bpm' | 'ts', tick: number } | null}
  */
-function pickConductorMarkerAtPlaybackHeader(gx, localY) {
+function pickConductorMarkerAtPlaybackHeader(localX, localY) {
     if (!conductorTrackVisible()) return null;
     const thresholdPx = 8;
     let best = null;
     let bestPri = Infinity;
+    if (state.verticalPianoRoll) {
+        const h = state.gridHeight;
+        const seamY = h - 1;
+        const pan = state.verticalTimePanPx;
+        const pb = state.playbackTick;
+        const half = VERTICAL_PLAYBACK_STRIP_WIDTH / 2;
+        for (const e of state.tempoChanges) {
+            const yMark = seamY - (e.tick - pb) * SNAP_WIDTH + pan;
+            const d = Math.abs(yMark - localY);
+            if (d > thresholdPx) continue;
+            let pri = d;
+            if (localX >= half) pri += 5;
+            if (pri < bestPri) {
+                bestPri = pri;
+                best = { kind: 'bpm', tick: e.tick };
+            }
+        }
+        for (const e of state.timeSigChanges) {
+            const yMark = seamY - (e.tick - pb) * SNAP_WIDTH + pan;
+            const d = Math.abs(yMark - localY);
+            if (d > thresholdPx) continue;
+            let pri = d;
+            if (localX < half) pri += 5;
+            if (pri < bestPri) {
+                bestPri = pri;
+                best = { kind: 'ts', tick: e.tick };
+            }
+        }
+        return best;
+    }
+    const gx = localX + getPlaybackHeaderScrollPx();
     for (const e of state.tempoChanges) {
         const d = Math.abs(e.tick * SNAP_WIDTH - gx);
         if (d > thresholdPx) continue;

@@ -56,6 +56,19 @@
                             <span class="menu-check" id="theme-check">✓</span> Dark mode
                         </button>
                         <div class="menu-separator"></div>
+                        <button type="button" id="btn-view-vertical-roll" title="Pitch along the bottom, time upward; playhead on the keyboard edge">
+                            <span class="menu-check" id="vertical-roll-check">✓</span> Vertical piano roll
+                        </button>
+                        <button type="button" id="btn-view-midi-keyboard-monitor" title="Highlight on-screen keys from connected MIDI input (Web MIDI)">
+                            <span class="menu-check" id="midi-keyboard-monitor-check">✓</span> Show MIDI input on keyboard
+                        </button>
+                        <div class="menu-submenu" id="menu-key-signature-wrap">
+                            <button type="button" class="menu-submenu-label" id="btn-key-signature-menu" title="Limit piano roll and on-screen keyboard to a diatonic scale; hold Shift for chromatic notes" aria-haspopup="true" aria-expanded="false">
+                                Key signature <span class="menu-submenu-arrow" aria-hidden="true">▶</span>
+                            </button>
+                            <div class="menu-submenu-panel" id="key-signature-panel" role="menu" aria-label="Key signature"></div>
+                        </div>
+                        <div class="menu-separator"></div>
                         <button type="button" id="btn-view-reset-zoom" title="Restore default horizontal and vertical zoom">Reset zoom</button>
                         <button type="button" id="btn-view-zoom-fit" title="Zoom out until the whole timeline fits (or minimum zoom if the song is very long)">Zoom to fit</button>
                     </div>
@@ -76,7 +89,7 @@
                 <button type="button" id="btn-pause" class="playback-icon-btn" title="Pause (Space)"><img class="ui-icon playback-icon-img" src="Icons/Pause.png" alt="" /></button>
                 <button type="button" id="btn-stop" class="playback-icon-btn" title="Stop"><img class="ui-icon playback-icon-img" src="Icons/Stop.png" alt="" /></button>
                 <button type="button" id="btn-repeat" class="playback-icon-btn toggle-btn" title="Repeat"><img class="ui-icon playback-icon-img" src="Icons/Repeat.png" alt="" /></button>
-                <button type="button" id="btn-midi-record" class="playback-icon-btn toggle-btn midi-record-btn" title="Arm MIDI record: incoming MIDI channel + selected track’s channel (1–16, wrap) → recorded channel &amp; track; playhead runs until Stop or record off; Pause disabled while recording" aria-pressed="false"><span class="midi-record-dot" aria-hidden="true"></span></button>
+                <button type="button" id="btn-midi-record" class="playback-icon-btn toggle-btn midi-record-btn" title="Arm MIDI record: notes, control changes (e.g. sustain), and pitch bend use the same channel remap as notes; playhead runs until Stop or record off; Pause disabled while recording" aria-pressed="false"><span class="midi-record-dot" aria-hidden="true"></span></button>
             </div>
             <div class="toolbar-group playback-time-group">
                 <button type="button" id="btn-time-format" class="time-format-btn" title="Switch between M:S and measure.beat">M:S</button>
@@ -132,6 +145,13 @@
                     </select>
                 </label>
                 <span id="sf-loading-indicator" style="display:none; color:#e94560;">Loading…</span>
+            </div>
+            <div class="toolbar-group">
+                <label class="midi-out-label" title="Send sequencer playback (notes, program changes, CC, pitch bend) to a hardware MIDI output. Built-in SoundFont still plays unless you mute your system.">MIDI out:
+                    <select id="midi-output-select" aria-label="MIDI output device">
+                        <option value="">Off (built-in only)</option>
+                    </select>
+                </label>
             </div>
         </div>
     </div>
@@ -305,7 +325,9 @@
         </div>
     </div>
     <script src="constants.js"></script>
+    <script src="key-signature.js"></script>
     <script src="audio.js"></script>
+    <script src="midi-output.js"></script>
     <script src="state.js"></script>
     <script src="render.js"></script>
     <script src="interactions.js"></script>

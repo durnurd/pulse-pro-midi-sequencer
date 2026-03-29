@@ -772,6 +772,62 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
     --ae-expanded-h: 0px;
 }
 
+/* Vertical piano roll: time ruler on left (matches grid), timeline upward, keyboard below */
+#sequencer-container.layout-vertical {
+    grid-template-columns: 52px 1fr 12px;
+    grid-template-rows: 1fr auto 12px;
+}
+#sequencer-container.layout-vertical #keyboard-header-spacer {
+    display: none;
+}
+#sequencer-container.layout-vertical #sb-corner {
+    display: none;
+}
+#sequencer-container.layout-vertical #playback-header {
+    grid-column: 1;
+    grid-row: 1;
+    overflow: hidden;
+    border-bottom: none;
+    border-right: 1px solid var(--toolbar-border);
+    cursor: default;
+    min-width: 0;
+}
+#sequencer-container.layout-vertical #grid-panel {
+    grid-column: 2;
+    grid-row: 1;
+}
+#sequencer-container.layout-vertical #scrollbar-v {
+    grid-column: 3;
+    grid-row: 1;
+}
+/* Same column as grid so keys line up with note columns (not under the time ruler strip). */
+#sequencer-container.layout-vertical #keyboard-panel {
+    grid-column: 2;
+    grid-row: 2;
+    border-right: none;
+    border-top: 1px solid var(--toolbar-border);
+    min-height: 120px;
+    max-height: 120px;
+}
+#sequencer-container.layout-vertical #sb-spacer-bl {
+    display: block;
+    grid-column: 1;
+    grid-row: 3;
+    border-right: 1px solid var(--toolbar-border);
+}
+#sequencer-container.layout-vertical #scrollbar-h {
+    grid-column: 2;
+    grid-row: 3;
+}
+#sequencer-container.layout-vertical #sb-spacer-br {
+    grid-column: 3;
+    grid-row: 3;
+}
+#sequencer-container.layout-vertical #automation-expanded-strip {
+    left: 52px;
+    right: 12px;
+}
+
 /* Docked automation strip above horizontal scrollbar (timeline width only) */
 #automation-expanded-strip {
     display: none;
@@ -820,6 +876,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 #sequencer-container.sequencer-ae-expanded #grid-panel,
 #sequencer-container.sequencer-ae-expanded #keyboard-panel,
 #sequencer-container.sequencer-ae-expanded #scrollbar-v {
+    padding-bottom: var(--ae-expanded-h);
+    box-sizing: border-box;
+}
+#sequencer-container.sequencer-ae-expanded.layout-vertical #playback-header {
     padding-bottom: var(--ae-expanded-h);
     box-sizing: border-box;
 }

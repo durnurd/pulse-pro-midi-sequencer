@@ -455,7 +455,15 @@ function aeSyncOverlayTabs() {
     });
 }
 
+function pulseProSyncAeExpandButtonVisibility() {
+    if (!aeToggleExpand) return;
+    const hide = !!state.verticalPianoRoll;
+    aeToggleExpand.style.display = hide ? 'none' : '';
+    aeToggleExpand.disabled = hide;
+}
+
 function aeSetAutomationEditorExpanded(expanded) {
+    if (expanded && state.verticalPianoRoll) return;
     state.automationEditorExpanded = !!expanded;
     if (!sequencerContainer || !aeStrip || !channelList || !channelListRows || !aePanel || !automationOverlayPanel) return;
     if (state.automationEditorExpanded) {
@@ -476,7 +484,7 @@ function aeSetAutomationEditorExpanded(expanded) {
             : 'Expand automation editor below piano roll';
     }
     aePixelsPerTick = SNAP_WIDTH;
-    aeScrollX = state.scrollX;
+    aeScrollX = typeof getPlaybackHeaderScrollPx === 'function' ? getPlaybackHeaderScrollPx() : state.scrollX;
     aeClearCurveDraft();
     aeLineStart = null;
     aeLineEnd = null;
@@ -514,7 +522,7 @@ function renderAutomationEditor() {
     // Context-dependent scroll/zoom
     if (state.automationEditorExpanded) {
         aePixelsPerTick = SNAP_WIDTH;
-        aeScrollX = state.scrollX;
+        aeScrollX = typeof getPlaybackHeaderScrollPx === 'function' ? getPlaybackHeaderScrollPx() : state.scrollX;
     } else if (state.isPlaying) {
         aeFollowPlayback();
     } else if (!aeDrawing) {
@@ -530,7 +538,8 @@ function renderAutomationEditor() {
         } else if (selKey === '' && aeLastSelectionKey !== '') {
             aeLastSelectionKey = '';
             aePixelsPerTick = SNAP_WIDTH;
-            aeScrollX = state.scrollX * (aePixelsPerTick / SNAP_WIDTH);
+            const ts = typeof getPlaybackHeaderScrollPx === 'function' ? getPlaybackHeaderScrollPx() : state.scrollX;
+            aeScrollX = ts * (aePixelsPerTick / SNAP_WIDTH);
         }
     }
 
@@ -810,6 +819,7 @@ document.getElementById('ae-tool-select').addEventListener('click', function() {
 
 if (aeToggleExpand) {
     aeToggleExpand.addEventListener('click', function() {
+        if (state.verticalPianoRoll) return;
         aeSetAutomationEditorExpanded(!state.automationEditorExpanded);
     });
 }
@@ -1144,10 +1154,13 @@ window.renderAutomationEditor = renderAutomationEditor;
 window.aeResize = aeResize;
 window.aeSyncOverlayTabs = aeSyncOverlayTabs;
 window.aeSetAutomationEditorExpanded = aeSetAutomationEditorExpanded;
+window.pulseProSyncAeExpandButtonVisibility = pulseProSyncAeExpandButtonVisibility;
 window.tryCopyAutomation = tryCopyAutomation;
 window.tryPasteAutomation = tryPasteAutomation;
 window.aeSetTool = aeSetTool;
 
 state.automationEditorTool = aeTool;
+
+pulseProSyncAeExpandButtonVisibility();
 
 })();

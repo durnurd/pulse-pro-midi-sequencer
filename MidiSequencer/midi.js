@@ -115,8 +115,13 @@ function exportMidi() {
         writeVL(trk, 0); trk.push(0xC0 | ch, trkInfo.instrument);
         const evts = [];
         for (const n of trkNotes[ti]) {
-            evts.push({ t: n.startTick, k: 0, d: [0x90 | ch, n.note, n.velocity ?? 100] });
-            evts.push({ t: n.startTick + n.durationTicks, k: 1, d: [0x80 | ch, n.note, 0] });
+            const vel = n.velocity ?? 100;
+            const dur = Math.max(1, n.durationTicks | 0);
+            const endT = n.startTick + dur;
+            // Sort keys at equal tick: note-off before note-on (matches common SMF and our import order).
+            // If note-on is sorted first, same-pitch legato pairs break and LIFO stacks mis-close notes.
+            evts.push({ t: n.startTick, k: 1, d: [0x90 | ch, n.note, vel] });
+            evts.push({ t: endT, k: 0, d: [0x80 | ch, n.note, 0] });
         }
         // Write automation events on the first track that uses this channel
         if (!chAutomationWritten[ch]) {
@@ -130,7 +135,13 @@ function exportMidi() {
                 evts.push({ t: cc.tick, k: 0.5, d: [0xB0 | ch, cc.controller, cc.value] });
             }
         }
-        evts.sort((a, b) => a.t - b.t || a.k - b.k);
+        evts.sort((a, b) => {
+            if (a.t !== b.t) return a.t - b.t;
+            if (a.k !== b.k) return a.k - b.k;
+            const ba = a.d[1] != null ? a.d[1] : 0;
+            const bb = b.d[1] != null ? b.d[1] : 0;
+            return ba - bb;
+        });
         let prev = 0;
         for (const e of evts) {
             writeVL(trk, e.t - prev);
@@ -207,9 +218,19 @@ function applyMidiImportFromArrayBuffer(arrayBuffer, options) {
         state.tracks[i].instrument = chInstr[state.tracks[i].channel];
     }
     for (let ch = 0; ch < 16; ch++) audioEngine.setInstrument(ch, chInstr[ch]);
+    if (typeof window.pulseProMidiOutSendProgramsFromArray === 'function') {
+        window.pulseProMidiOutSendProgramsFromArray(chInstr);
+    }
     state.pitchBends = r.pitchBends || [];
     state.controllerChanges = r.controllerChanges || [];
-    state.playbackTick = 0; state.playbackStartTick = 0; state.lastMousePlaybackTick = 0; state.scrollX = 0;
+    state.playbackTick = 0; state.playbackStartTick = 0; state.lastMousePlaybackTick = 0;
+    if (state.verticalPianoRoll) {
+        state.timelineHeaderScrollPx = 0;
+        state.verticalTimePanPx = 0;
+        state.scrollX = 0;
+    } else {
+        state.scrollX = 0;
+    }
     setActiveTrack(0);
     reassignTrackColors();
     if (window.syncUIAfterImport) window.syncUIAfterImport();
@@ -295,10 +316,32 @@ function importMidi(buf) {
         if (cid !== 'MTrk') { off += clen; continue; }
         const tend = off + clen;
         let at = 0, rs = 0, pn = null;
-        const act = new Map();
+        /** @type {Map<string, { t: number, v: number }[]>} LIFO stack per ch-note (overlapping same-pitch notes). */
+        const pendingStacks = new Map();
         const trkNotes = [];
         const chInstruments = new Array(16).fill(0); // per-channel program changes
         const channelsSeen = new Set();
+        function pushNoteOn(k, t, v) {
+            let st = pendingStacks.get(k);
+            if (!st) {
+                st = [];
+                pendingStacks.set(k, st);
+            }
+            st.push({ t, v });
+        }
+        function closeNoteFromStack(k, endAbsTick, nt, ch) {
+            const st = pendingStacks.get(k);
+            if (!st || st.length === 0) return;
+            const s = st.pop();
+            if (st.length === 0) pendingStacks.delete(k);
+            trkNotes.push({
+                note: nt,
+                channel: ch,
+                startTick: Math.round(s.t * sc),
+                durationTicks: Math.max(1, Math.round((endAbsTick - s.t) * sc)),
+                velocity: s.v,
+            });
+        }
         while (off < tend) {
             const dv = readVL(d, off); off = dv.o; at += dv.v;
             let sb = d[off];
@@ -323,16 +366,15 @@ function importMidi(buf) {
                 channelsSeen.add(ch);
                 const k = `${ch}-${nt}`;
                 if (vl === 0) {
-                    const s = act.get(k);
-                    if (s) { trkNotes.push({ note: nt, channel: ch, startTick: Math.round(s.t * sc), durationTicks: Math.max(1, Math.round((at - s.t) * sc)), velocity: s.v }); act.delete(k); }
+                    closeNoteFromStack(k, at, nt, ch);
                 } else {
-                    act.set(k, { t: at, v: vl });
+                    pushNoteOn(k, at, vl);
                 }
             } else if (tp === 0x80) {
                 const nt = d[off++]; off++;
                 channelsSeen.add(ch);
-                const k = `${ch}-${nt}`, s = act.get(k);
-                if (s) { trkNotes.push({ note: nt, channel: ch, startTick: Math.round(s.t * sc), durationTicks: Math.max(1, Math.round((at - s.t) * sc)), velocity: s.v }); act.delete(k); }
+                const k = `${ch}-${nt}`;
+                closeNoteFromStack(k, at, nt, ch);
             } else if (tp === 0xB0) {
                 const cc = d[off++], cv = d[off++];
                 controllerChanges.push({ tick: Math.round(at * sc), channel: ch, controller: cc, value: cv });
@@ -348,6 +390,23 @@ function importMidi(buf) {
             else if (sb === 0xF0 || sb === 0xF7) { const sl = readVL(d, off); off = sl.o + sl.v; }
             else off += 2;
         }
+        // Implicit note-off at end of track for any keys still held (matches common MIDI semantics)
+        for (const [k, st] of pendingStacks) {
+            while (st.length > 0) {
+                const s = st.pop();
+                const parts = k.split('-');
+                const pch = parseInt(parts[0], 10);
+                const pnt = parseInt(parts[1], 10);
+                trkNotes.push({
+                    note: pnt,
+                    channel: pch,
+                    startTick: Math.round(s.t * sc),
+                    durationTicks: Math.max(1, Math.round((at - s.t) * sc)),
+                    velocity: s.v,
+                });
+            }
+        }
+        pendingStacks.clear();
         off = tend;
         if (trkNotes.length === 0) continue;
         // If this SMF track uses only one channel, create one track
