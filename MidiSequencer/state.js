@@ -46,7 +46,7 @@ const state = {
     playbackSoundingTracks: new Set(),
 
     // Active tool: 'cursor', 'pencil', 'eraser'
-    activeTool: 'cursor',
+    activeTool: 'pencil',
 
     // Time signature (values from project start until first timeSig change)
     timeSigNumerator: 4,

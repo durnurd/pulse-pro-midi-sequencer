@@ -100,8 +100,8 @@
                 </span>
             </div>
             <div class="toolbar-group tool-select">
-                <button id="tool-cursor" class="tool-btn active" title="Cursor (1/V)"><img class="ui-icon tool-icon-img tool-cursor-icon" src="Icons/MousePointer.png" alt="" /></button>
-                <button id="tool-pencil" class="tool-btn" title="Pencil (2/P)"><img class="ui-icon tool-icon-img" src="Icons/Edit.png" alt="" /></button>
+                <button id="tool-cursor" class="tool-btn" title="Cursor (1/V)"><img class="ui-icon tool-icon-img tool-cursor-icon" src="Icons/MousePointer.png" alt="" /></button>
+                <button id="tool-pencil" class="tool-btn active" title="Pencil (2/P)"><img class="ui-icon tool-icon-img" src="Icons/Edit.png" alt="" /></button>
                 <button id="tool-eraser" class="tool-btn" title="Eraser (3/E)"><img class="ui-icon tool-icon-img" src="Icons/Eraser.png" alt="" /></button>
             </div>
             </div>
@@ -340,9 +340,12 @@
     <script src="automation-editor.js"></script>
     <script src="main.js"></script>
     <script type="module">
-        // Import SpessaSynth WorkletSynthesizer and expose it globally
-        import { WorkletSynthesizer } from 'https://cdn.jsdelivr.net/npm/spessasynth_lib@4.2.2/dist/index.js';
+        import { WorkletSynthesizer, WorkerSynthesizer } from 'https://cdn.jsdelivr.net/npm/spessasynth_lib@4.2.2/dist/index.js';
         window.SpessaSynthWorkletSynthesizer = WorkletSynthesizer;
+        window.__spessaWorkerSynthInstaller = {
+            WorkerSynthesizer,
+            workerModuleURL: new URL('spessasynth-audio-worker.js', import.meta.url).href
+        };
 
         // Bundled default (same folder as index.html) loads on http(s). Optional extras: release page + file picker.
         const SOUNDFONT_RELEASE_PAGE =
@@ -447,7 +450,7 @@
             select.innerHTML = '';
             if (location.protocol === 'file:') {
                 appendNoSoundFontPlaceholder();
-                return;
+                return true;
             }
             const loadingOpt = document.createElement('option');
             loadingOpt.value = '';
@@ -467,14 +470,40 @@
                 opt.textContent = DEFAULT_SOUNDFONT_LABEL;
                 opt.selected = true;
                 select.appendChild(opt);
-            } else {
-                appendNoSoundFontPlaceholder();
-                return;
+                ensureActionsOptgroup();
+                return true;
             }
-            ensureActionsOptgroup();
+            appendNoSoundFontPlaceholder();
+            return false;
         }
 
-        void setupBundledDefaultSoundFont();
+        function armBundledSoundFontAfterUserGesture() {
+            select.innerHTML = '';
+            const hint = document.createElement('option');
+            hint.value = '';
+            hint.textContent = 'Click or tap anywhere to retry audio…';
+            hint.disabled = true;
+            hint.selected = true;
+            select.appendChild(hint);
+
+            const start = () => {
+                document.removeEventListener('pointerdown', start, true);
+                document.removeEventListener('keydown', start, true);
+                void (async () => {
+                    const ok = await setupBundledDefaultSoundFont();
+                    if (!ok) armBundledSoundFontAfterUserGesture();
+                })();
+            };
+            document.addEventListener('pointerdown', start, true);
+            document.addEventListener('keydown', start, true);
+        }
+
+        void (async () => {
+            const ok = await setupBundledDefaultSoundFont();
+            if (!ok && location.protocol !== 'file:') {
+                armBundledSoundFontAfterUserGesture();
+            }
+        })();
     </script>
 </body>
 </html>

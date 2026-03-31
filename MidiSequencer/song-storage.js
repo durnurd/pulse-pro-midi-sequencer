@@ -845,7 +845,7 @@
                         const buf = await readMidiBytes(item.id);
                         if (!buf) { alert('Missing data.'); return; }
                         try {
-                            if (typeof startLibraryPreview === 'function') startLibraryPreview(buf, item.id);
+                            if (typeof startLibraryPreview === 'function') await startLibraryPreview(buf, item.id);
                         } catch (err) {
                             alert('Could not play file.');
                         }

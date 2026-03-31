@@ -25,12 +25,12 @@ function syncPlaybackSoundingTracksFromMap(activeMap) {
     }
 }
 
-function startPlayback() {
+async function startPlayback() {
     stopLibraryPreview();
     if (typeof window.pulseProMidiRecordOnPlaybackStart === 'function') {
         window.pulseProMidiRecordOnPlaybackStart();
     }
-    audioEngine.init();
+    await audioEngine.init();
     state.isPlaying = true;
     state.isPaused = false;
     state.playbackStartTime = performance.now();
@@ -161,7 +161,7 @@ function togglePlayPause() {
         if (state.midiRecordArmed) return;
         pausePlayback();
     } else {
-        startPlayback();
+        void startPlayback();
     }
 }
 
@@ -563,7 +563,7 @@ function libraryPreviewLoop() {
  * Preview a MIDI file through the synth without loading it into the sequencer.
  * Clicking Play again for the same songId stops preview. Uses importMidi() in midi.js.
  */
-function startLibraryPreview(arrayBuffer, songId) {
+async function startLibraryPreview(arrayBuffer, songId) {
     if (libraryPreviewCtx && libraryPreviewCtx.songId === songId) {
         stopLibraryPreview();
         return;
@@ -596,7 +596,7 @@ function startLibraryPreview(arrayBuffer, songId) {
         return;
     }
 
-    audioEngine.init();
+    await audioEngine.init();
     const chInstr = new Array(16).fill(0);
     for (const trk of r.importedTracks) {
         chInstr[trk.channel] = trk.instrument;
