@@ -15,6 +15,7 @@
 </head>
 <body>
     <div id="toolbar">
+        <div class="toolbar-primary">
         <div class="toolbar-left">
             <div class="toolbar-group">
                 <div class="dropdown">
@@ -82,6 +83,7 @@
                 </div>
             </div>
         </div>
+        <div class="toolbar-flex-grow" aria-hidden="true"></div>
         <div class="toolbar-center-wrap">
             <div class="toolbar-center">
             <div class="toolbar-group playback-controls">
@@ -100,11 +102,13 @@
                 </span>
             </div>
             <div class="toolbar-group tool-select">
-                <button id="tool-cursor" class="tool-btn active" title="Cursor (1/V)"><img class="ui-icon tool-icon-img tool-cursor-icon" src="Icons/MousePointer.png" alt="" /></button>
-                <button id="tool-pencil" class="tool-btn" title="Pencil (2/P)"><img class="ui-icon tool-icon-img" src="Icons/Edit.png" alt="" /></button>
+                <button id="tool-cursor" class="tool-btn" title="Cursor (1/V)"><img class="ui-icon tool-icon-img tool-cursor-icon" src="Icons/MousePointer.png" alt="" /></button>
+                <button id="tool-pencil" class="tool-btn active" title="Pencil (2/P)"><img class="ui-icon tool-icon-img" src="Icons/Edit.png" alt="" /></button>
                 <button id="tool-eraser" class="tool-btn" title="Eraser (3/E)"><img class="ui-icon tool-icon-img" src="Icons/Eraser.png" alt="" /></button>
             </div>
             </div>
+        </div>
+        <div class="toolbar-flex-grow" aria-hidden="true"></div>
         </div>
         <div class="toolbar-right">
             <div class="toolbar-group">
@@ -121,22 +125,36 @@
                     </select>
                 </label>
             </div>
-            <div class="toolbar-group">
-                <label>Time Sig:
-                    <select id="timesig-num">
-                        <option value="2">2</option>
-                        <option value="3">3</option>
-                        <option value="4" selected>4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                        <option value="7">7</option>
-                    </select>
-                    /
-                    <select id="timesig-den">
-                        <option value="4" selected>4</option>
-                        <option value="8">8</option>
-                    </select>
-                </label>
+            <div class="toolbar-group timesig-combo-toolbar-group">
+                <label class="timesig-combo-field-label" for="timesig-combo-trigger">Time sig:</label>
+                <div class="timesig-combo" id="timesig-combo">
+                    <button type="button" id="timesig-combo-trigger" class="timesig-combo-trigger" aria-haspopup="true" aria-controls="timesig-combo-panel" aria-expanded="false" title="Time signature — click to choose beats and unit">
+                        <span id="timesig-combo-display" class="timesig-combo-display">4 / 4</span>
+                        <span class="timesig-combo-caret" aria-hidden="true">▾</span>
+                    </button>
+                    <div id="timesig-combo-panel" class="timesig-combo-panel" role="group" aria-label="Time signature">
+                        <div class="timesig-combo-listboxes">
+                            <div class="timesig-listbox-col">
+                                <span class="timesig-listbox-label" id="timesig-num-lbl">Beats</span>
+                                <select id="timesig-num" class="timesig-listbox" size="6" title="Beats per bar (numerator)" aria-labelledby="timesig-num-lbl">
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4" selected>4</option>
+                                    <option value="5">5</option>
+                                    <option value="6">6</option>
+                                    <option value="7">7</option>
+                                </select>
+                            </div>
+                            <div class="timesig-listbox-col">
+                                <span class="timesig-listbox-label" id="timesig-den-lbl">Unit</span>
+                                <select id="timesig-den" class="timesig-listbox" size="2" title="Beat unit (denominator)" aria-labelledby="timesig-den-lbl">
+                                    <option value="4" selected>4</option>
+                                    <option value="8">8</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="toolbar-group">
                 <label>SoundFont:
@@ -263,20 +281,25 @@
             </div>
             <div class="conductor-dialog-field conductor-insert-ts-wrap hidden" id="conductor-insert-ts-wrap">
                 <span id="conductor-insert-ts-label" class="conductor-insert-label">Time signature</span>
-                <div class="conductor-insert-ts-row">
-                    <select id="conductor-insert-ts-num" aria-label="Time signature numerator">
-                        <option value="2">2</option>
-                        <option value="3">3</option>
-                        <option value="4" selected>4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                        <option value="7">7</option>
-                    </select>
-                    <span class="conductor-insert-ts-sep" aria-hidden="true">/</span>
-                    <select id="conductor-insert-ts-den" aria-label="Time signature denominator">
-                        <option value="4" selected>4</option>
-                        <option value="8">8</option>
-                    </select>
+                <div class="timesig-combo-listboxes conductor-insert-ts-listboxes">
+                    <div class="timesig-listbox-col">
+                        <span class="timesig-listbox-label" id="conductor-insert-ts-num-lbl">Beats</span>
+                        <select id="conductor-insert-ts-num" class="timesig-listbox" size="6" aria-labelledby="conductor-insert-ts-label conductor-insert-ts-num-lbl">
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4" selected>4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                        </select>
+                    </div>
+                    <div class="timesig-listbox-col">
+                        <span class="timesig-listbox-label" id="conductor-insert-ts-den-lbl">Unit</span>
+                        <select id="conductor-insert-ts-den" class="timesig-listbox" size="2" aria-labelledby="conductor-insert-ts-label conductor-insert-ts-den-lbl">
+                            <option value="4" selected>4</option>
+                            <option value="8">8</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             <div class="conductor-dialog-actions">

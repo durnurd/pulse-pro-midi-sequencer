@@ -38,18 +38,32 @@
 
 html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 13px; }
 
-/* Three-column grid: left / centered transport / right — avoids overlap when the window is narrow. */
+/* Flex wrap: primary (menus + transport + tools) and right (BPM…) share one row when wide; wrap to two rows when narrow (break after eraser, before BPM). */
 #toolbar {
     position: relative;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 8px 12px;
-    padding: 0 12px;
+    gap: 6px 12px;
+    padding: 6px 12px;
     background: var(--toolbar-bg);
     border-bottom: 1px solid var(--toolbar-border);
     min-height: 40px;
     z-index: 10;
+    box-sizing: border-box;
+}
+.toolbar-primary {
+    display: flex;
+    align-items: center;
+    gap: 8px 12px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.toolbar-flex-grow {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    align-self: stretch;
 }
 .toolbar-left, .toolbar-right {
     display: flex;
@@ -57,15 +71,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
     gap: 12px;
     min-width: 0;
 }
-.toolbar-left { justify-self: start; }
 .toolbar-right {
-    justify-self: end;
     flex-wrap: nowrap;
+    flex: 0 1 auto;
+    margin-left: auto;
 }
 .toolbar-center-wrap {
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: center;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
 }
@@ -96,6 +111,125 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 }
 #toolbar button:hover { background: var(--btn-hover); }
 #toolbar .toggle-btn.active { background: var(--accent); }
+
+/* Time signature: one toolbar control opens a panel with numerator/denominator selects */
+.timesig-combo-toolbar-group {
+    align-items: center;
+    gap: 4px;
+}
+.timesig-combo-field-label {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+.timesig-combo {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+/* #toolbar .timesig-combo-trigger beats #toolbar button so compact padding applies */
+#toolbar .timesig-combo-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    justify-content: space-between;
+    background: var(--input-bg) !important;
+    color: var(--text);
+    border: 1px solid var(--input-border) !important;
+    border-radius: 4px;
+    padding: 2px 4px 2px 5px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+}
+#toolbar .timesig-combo-trigger:hover:not(:disabled) {
+    background: var(--btn-hover) !important;
+}
+#toolbar .timesig-combo-trigger:disabled {
+    cursor: not-allowed;
+    opacity: 0.92;
+}
+.timesig-combo-display {
+    font-variant-numeric: tabular-nums;
+}
+.timesig-combo-caret {
+    font-size: 9px;
+    opacity: 0.75;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-left: 1px;
+}
+.timesig-combo-panel {
+    display: none;
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    padding: 4px 6px;
+    background: var(--dialog-bg);
+    border: 1px solid var(--toolbar-border);
+    border-radius: 4px;
+    box-shadow: 0px 4px 16px rgba(0, 0, 0, 0.4);
+}
+.timesig-combo.open .timesig-combo-panel {
+    display: block;
+}
+.timesig-combo.open .timesig-combo-trigger {
+    background: var(--dialog-bg) !important;
+    box-shadow: 0 -1px 0 var(--toolbar-border) inset;
+}
+.timesig-combo-listboxes {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 10px;
+}
+.timesig-listbox-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+}
+.timesig-listbox-label {
+    font-size: 10px;
+    font-weight: 600;
+    opacity: 0.8;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+select.timesig-listbox {
+    min-width: 2.75rem;
+    width: 100%;
+    margin: 0;
+    padding: 2px;
+    font-size: 13px;
+    line-height: 1.35;
+    cursor: pointer;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--text);
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+select.timesig-listbox:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+.conductor-value-dialog-panel select.timesig-listbox {
+    font-size: 14px;
+    padding: 3px 5px;
+}
+.conductor-insert-ts-listboxes {
+    align-self: center;
+}
 
 /* Dropdown Menu */
 .dropdown { position: relative; display: inline-block; height: 100%; display: flex; align-items: center; }
@@ -290,24 +424,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 .conductor-insert-bpm-wrap.hidden,
 .conductor-insert-ts-wrap.hidden {
     display: none !important;
-}
-.conductor-insert-ts-row {
-    align-items: center;
-    gap: 10px;
-}
-.conductor-insert-ts-row select {
-    background: var(--input-bg);
-    color: var(--text);
-    border: 1px solid var(--input-border);
-    border-radius: 4px;
-    padding: 8px 10px;
-    font-size: 14px;
-    font-family: inherit;
-    min-width: 4rem;
-}
-.conductor-insert-ts-sep {
-    opacity: 0.85;
-    font-weight: 600;
 }
 .conductor-insert-label {
     font-size: 13px;

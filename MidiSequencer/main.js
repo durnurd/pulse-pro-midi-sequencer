@@ -604,9 +604,48 @@
     }
     syncGridSnapUi();
 
-    // Time signature
+    // Time signature (combined toolbar control + popover with two native selects)
     const tsNum = document.getElementById('timesig-num');
     const tsDen = document.getElementById('timesig-den');
+    const tsCombo = document.getElementById('timesig-combo');
+    const tsComboTrigger = document.getElementById('timesig-combo-trigger');
+    const tsComboDisplay = document.getElementById('timesig-combo-display');
+
+    function syncTimesigComboDisplay() {
+        if (!tsComboDisplay || !tsNum || !tsDen) return;
+        tsComboDisplay.textContent = tsNum.value + ' / ' + tsDen.value;
+    }
+
+    function setTimesigComboOpen(open) {
+        if (!tsCombo || !tsComboTrigger) return;
+        tsCombo.classList.toggle('open', open);
+        tsComboTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open && tsNum && !tsNum.disabled) {
+            requestAnimationFrame(function() {
+                if (tsCombo.classList.contains('open')) tsNum.focus();
+            });
+        }
+    }
+
+    if (tsComboTrigger && tsCombo) {
+        tsComboTrigger.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (tsComboTrigger.disabled) return;
+            setTimesigComboOpen(!tsCombo.classList.contains('open'));
+        });
+        document.addEventListener('mousedown', function(e) {
+            if (!tsCombo.classList.contains('open')) return;
+            if (tsCombo.contains(e.target)) return;
+            setTimesigComboOpen(false);
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Escape') return;
+            if (!tsCombo.classList.contains('open')) return;
+            setTimesigComboOpen(false);
+            tsComboTrigger.focus();
+        });
+    }
+
     tsNum.addEventListener('change', function() {
         const v = parseInt(this.value);
         if (v === state.timeSigNumerator) return;
@@ -615,6 +654,7 @@
         if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
             window.reanchorPlaybackClockIfPlaying();
         }
+        syncTimesigComboDisplay();
         blurIfActive(this);
         renderAll();
     });
@@ -626,9 +666,11 @@
         if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
             window.reanchorPlaybackClockIfPlaying();
         }
+        syncTimesigComboDisplay();
         blurIfActive(this);
         renderAll();
     });
+    syncTimesigComboDisplay();
 
     /** Toolbar BPM / time signature: live values while playing; disabled if conductor map exists. */
     function updateToolbarPlaybackTempoDisplay() {
@@ -636,7 +678,8 @@
         const lockFields = state.isPlaying && conductorTrackVisible();
         const editingTransport = document.activeElement === bpmInput
             || document.activeElement === tsNum
-            || document.activeElement === tsDen;
+            || document.activeElement === tsDen
+            || document.activeElement === tsComboTrigger;
         if (state.isPlaying) {
             const t = Math.max(0, Math.floor(state.playbackTick));
             bpmInput.value = String(Math.round(getEffectiveBpmAtTick(t)));
@@ -651,10 +694,21 @@
         bpmInput.disabled = lockFields;
         tsNum.disabled = lockFields;
         tsDen.disabled = lockFields;
+        if (tsComboTrigger) {
+            tsComboTrigger.disabled = lockFields;
+            if (lockFields) setTimesigComboOpen(false);
+        }
+        syncTimesigComboDisplay();
         const lockedHint = 'Conductor map is active — values follow playback position while playing.';
         bpmInput.title = lockFields ? lockedHint : 'Project tempo (tick 0); editable when stopped.';
-        tsNum.title = lockFields ? lockedHint : 'Project time signature (tick 0).';
-        tsDen.title = lockFields ? lockedHint : 'Project time signature (tick 0).';
+        const tsLocked = lockFields ? lockedHint : '';
+        tsNum.title = tsLocked || 'Beats per bar (numerator)';
+        tsDen.title = tsLocked || 'Beat unit (denominator)';
+        if (tsComboTrigger) {
+            tsComboTrigger.title = lockFields
+                ? lockedHint
+                : 'Time signature — click to choose beats and unit';
+        }
     }
     window.updateToolbarPlaybackTempoDisplay = updateToolbarPlaybackTempoDisplay;
 
@@ -849,6 +903,7 @@
         // Time signature
         document.getElementById('timesig-num').value = state.timeSigNumerator;
         document.getElementById('timesig-den').value = state.timeSigDenominator;
+        syncTimesigComboDisplay();
         state.snapGridPower = setSnapGridPower(state.snapGridPower);
         syncGridSnapUi();
         // Rebuild track list
@@ -1010,7 +1065,7 @@
         state.highlightedKeys.clear();
 
         // Reset tool
-        setTool('cursor');
+        setTool('pencil');
 
         // Sync channel list UI
         syncUIAfterImport();
@@ -1413,6 +1468,7 @@
                 state.timeSigDenominator = d;
                 document.getElementById('timesig-num').value = n;
                 document.getElementById('timesig-den').value = d;
+                syncTimesigComboDisplay();
                 state.timeSigChanges = state.timeSigChanges.filter(function(e) { return e.tick !== 0; });
             } else {
                 state.timeSigChanges = state.timeSigChanges.filter(function(e) { return e.tick !== t; });
