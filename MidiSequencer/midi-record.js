@@ -182,6 +182,18 @@ function applyMidiKeyboardMonitorFromMessage(data) {
 }
 
 function startRecordedNote(midiCh, note, velocity) {
+    if (typeof window.pulseProFoolsShouldBlockMiddleC === 'function' && window.pulseProFoolsShouldBlockMiddleC(note)) {
+        if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
+            window.pulseProFoolsShowUpgradeDialog('middleC');
+        }
+        return;
+    }
+    if (typeof window.pulseProFoolsShouldBlockBlackKey === 'function' && window.pulseProFoolsShouldBlockBlackKey(note)) {
+        if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
+            window.pulseProFoolsShowUpgradeDialog('blackKeys');
+        }
+        return;
+    }
     if (isKeySignatureActive(state.keySignature) && !midiNoteInKeySignature(note, state.keySignature)) return;
     const outCh = remappedRecordChannel(midiCh);
     const trk = trackIndexForMidiChannel(outCh);

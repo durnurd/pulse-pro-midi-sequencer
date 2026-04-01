@@ -31,6 +31,18 @@ function ht(gx, gy) {
 }
 function noteFromY(gy) { return TOTAL_MIDI_NOTES - 1 - Math.floor(gy / NOTE_HEIGHT); }
 
+function foolsBlockPlacedPitchIfNeeded(midiNote) {
+    if (typeof window.pulseProFoolsShouldBlockMiddleC === 'function' && window.pulseProFoolsShouldBlockMiddleC(midiNote)) {
+        if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') window.pulseProFoolsShowUpgradeDialog('middleC');
+        return true;
+    }
+    if (typeof window.pulseProFoolsShouldBlockBlackKey === 'function' && window.pulseProFoolsShouldBlockBlackKey(midiNote)) {
+        if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') window.pulseProFoolsShowUpgradeDialog('blackKeys');
+        return true;
+    }
+    return false;
+}
+
 // Hover cursor
 canvas.addEventListener('mousemove', function(e) {
     const { x, y } = gc(e);
@@ -64,6 +76,7 @@ canvas.addEventListener('dblclick', function(e) {
     if (nnRaw < 0 || nnRaw > 127) return;
     const nn = keyLockPlacementPitchOrNull(nnRaw, e.shiftKey, state.keySignature);
     if (nn === null) return;
+    if (foolsBlockPlacedPitchIfNeeded(nn)) return;
     pushUndoState('add note');
     const n = addNote(nn, state.activeChannel, tick, TICKS_PER_SNAP, lastVelocityForNote(nn));
     state.mode = 'placing'; state.interactionNote = n;
@@ -158,6 +171,10 @@ canvas.addEventListener('mousedown', function(e) {
     }
     // Eraser
     if (state.activeTool === 'eraser') {
+        if (typeof window.pulseProFoolsShouldBlockEraser === 'function' && window.pulseProFoolsShouldBlockEraser()) {
+            if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') window.pulseProFoolsShowUpgradeDialog('eraser');
+            return;
+        }
         pushUndoState('erase notes');
         state.mode = 'erasing'; state.interactionData = { erasedIds: new Set() };
         const h = ht(x, y);
@@ -176,6 +193,7 @@ canvas.addEventListener('mousedown', function(e) {
         if (nn < 0 || nn > 127) return;
         const nnPlace = keyLockPlacementPitchOrNull(nn, e.shiftKey, state.keySignature);
         if (nnPlace === null) return;
+        if (foolsBlockPlacedPitchIfNeeded(nnPlace)) return;
         pushUndoState('add note');
         const n = addNote(nnPlace, state.activeChannel, tick, TICKS_PER_SNAP, lastVelocityForNote(nnPlace));
         state.mode = 'placing'; state.interactionNote = n;
@@ -197,18 +215,71 @@ canvas.addEventListener('mousedown', function(e) {
     renderAll();
 });
 
-// Move drag
-function moveDrag(gx, gy, shiftHeld) {
+// Move drag: free X+Y by default; hold Shift to lock to horizontal or vertical (dominant axis after 5px).
+// While Shift-locked, the suppressed axis stays at mousedown values (orig), not the in-progress drag position.
+// Alt bypasses key-signature pitch snap while dragging (Shift is reserved for axis lock).
+function moveDrag(gx, gy, shiftHeld, altHeld) {
     const d = state.interactionData, dx = gx - d.startMouseX, dy = gy - d.startMouseY;
-    if (!d.lockedAxis) { if (Math.abs(dx) > 5 || Math.abs(dy) > 5) d.lockedAxis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'; else return; }
-    for (const [id, orig] of d.origPositions) { const n = state.notes.find(nn => nn.id === id); if (!n) continue; if (d.lockedAxis === 'h') n.startTick = Math.max(0, orig.startTick + snapTick(dx)); else n.note = Math.max(0, Math.min(127, orig.note - Math.round(dy / NOTE_HEIGHT))); }
-    if (d.lockedAxis === 'v' && isKeySignatureActive(state.keySignature) && !shiftHeld) {
-        for (const [id, orig] of d.origPositions) {
+    if (shiftHeld) {
+        if (!d.lockedAxis) {
+            if (Math.abs(dx) <= 5 && Math.abs(dy) <= 5) return;
+            d.lockedAxis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+        }
+    } else {
+        d.lockedAxis = null;
+    }
+    const dySteps = Math.round(dy / NOTE_HEIGHT);
+    for (const [id, orig] of d.origPositions) {
+        const n = state.notes.find(nn => nn.id === id);
+        if (!n) continue;
+        if (!shiftHeld) {
+            n.startTick = Math.max(0, orig.startTick + snapTick(dx));
+            n.note = Math.max(0, Math.min(127, orig.note - dySteps));
+        } else if (d.lockedAxis === 'h') {
+            n.startTick = Math.max(0, orig.startTick + snapTick(dx));
+            n.note = orig.note;
+        } else if (d.lockedAxis === 'v') {
+            n.startTick = Math.max(0, orig.startTick);
+            n.note = Math.max(0, Math.min(127, orig.note - dySteps));
+        }
+    }
+    const verticalDragActive = !shiftHeld || d.lockedAxis === 'v';
+    const applyKeySnap = verticalDragActive && isKeySignatureActive(state.keySignature) && !altHeld
+        && ((shiftHeld && d.lockedAxis === 'v') || (!shiftHeld && dySteps !== 0));
+    if (applyKeySnap) {
+        for (const id of d.origPositions.keys()) {
             const n = state.notes.find(nn => nn.id === id);
             if (n) n.note = snapMidiNoteToKey(n.note, state.keySignature);
         }
     }
-    if (d.lockedAxis === 'v') { const mn = state.interactionNote; if (mn.note !== d.lastPreviewNote) { audioEngine.noteOff(d.lastPreviewNote, mn.channel); audioEngine.noteOn(mn.note, mn.channel); d.lastPreviewNote = mn.note; } }
+    if (typeof window.pulseProFoolsShouldBlockMiddleC === 'function') {
+        let dialogFeature = null;
+        for (const [id, orig] of d.origPositions) {
+            const n = state.notes.find(nn => nn.id === id);
+            if (!n) continue;
+            let revert = false;
+            if (window.pulseProFoolsShouldBlockMiddleC(n.note)) {
+                revert = true;
+                dialogFeature = dialogFeature || 'middleC';
+            } else if (typeof window.pulseProFoolsShouldBlockBlackKey === 'function' && window.pulseProFoolsShouldBlockBlackKey(n.note)) {
+                revert = true;
+                dialogFeature = dialogFeature || 'blackKeys';
+            }
+            if (revert) {
+                n.startTick = orig.startTick;
+                n.note = orig.note;
+            }
+        }
+        if (dialogFeature && typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
+            window.pulseProFoolsShowUpgradeDialog(dialogFeature);
+        }
+    }
+    const mn = state.interactionNote;
+    if (mn.note !== d.lastPreviewNote) {
+        audioEngine.noteOff(d.lastPreviewNote, mn.channel);
+        audioEngine.noteOn(mn.note, mn.channel);
+        d.lastPreviewNote = mn.note;
+    }
     renderAll();
 }
 
@@ -244,7 +315,7 @@ document.addEventListener('mousemove', function(e) {
         }
         updateHighlightedKeys(); renderAll();
     }
-    else if (state.mode === 'moving') { moveDrag(gx, gy, e.shiftKey); updateHighlightedKeys(); }
+    else if (state.mode === 'moving') { moveDrag(gx, gy, e.shiftKey, e.altKey); updateHighlightedKeys(); }
     else if (state.mode === 'selecting') {
         state.interactionData.currentX = gx; state.interactionData.currentY = gy;
         const d = state.interactionData;

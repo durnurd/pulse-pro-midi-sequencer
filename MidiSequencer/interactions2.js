@@ -19,6 +19,14 @@ kc.addEventListener('mousedown', function(e) {
         : noteFromY(e.clientY - r.top + state.scrollY);
     if (nn < 0 || nn > 127) return;
     if (!keyLockAllowsKeyboardPitch(nn, e.shiftKey, state.keySignature)) return;
+    if (typeof window.pulseProFoolsShouldBlockMiddleC === 'function' && window.pulseProFoolsShouldBlockMiddleC(nn)) {
+        if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') window.pulseProFoolsShowUpgradeDialog('middleC');
+        return;
+    }
+    if (typeof window.pulseProFoolsShouldBlockBlackKey === 'function' && window.pulseProFoolsShouldBlockBlackKey(nn)) {
+        if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') window.pulseProFoolsShowUpgradeDialog('blackKeys');
+        return;
+    }
     kcDragging = true;
     kcLastNote = nn;
     audioEngine.noteOn(nn, state.activeChannel);
@@ -35,6 +43,20 @@ document.addEventListener('mousemove', function(e) {
         : noteFromY(e.clientY - r.top + state.scrollY);
     if (nn < 0 || nn > 127) return;
     if (!keyLockAllowsKeyboardPitch(nn, e.shiftKey, state.keySignature)) {
+        if (kcLastNote >= 0) {
+            audioEngine.noteOff(kcLastNote, state.activeChannel);
+            if (typeof window.pulseProMidiOutNoteOff === 'function') {
+                window.pulseProMidiOutNoteOff(kcLastNote, state.activeChannel);
+            }
+            kcLastNote = -1;
+        }
+        state.highlightedKeys.clear();
+        renderAll();
+        return;
+    }
+    const foolsPitchBlocked = (typeof window.pulseProFoolsShouldBlockMiddleC === 'function' && window.pulseProFoolsShouldBlockMiddleC(nn))
+        || (typeof window.pulseProFoolsShouldBlockBlackKey === 'function' && window.pulseProFoolsShouldBlockBlackKey(nn));
+    if (foolsPitchBlocked) {
         if (kcLastNote >= 0) {
             audioEngine.noteOff(kcLastNote, state.activeChannel);
             if (typeof window.pulseProMidiOutNoteOff === 'function') {

@@ -1,6 +1,8 @@
-// april-fools.js - Optional April 1 / ?fools=1 visual gags (falling notes, silly instrument & drum labels).
+// april-fools.js - Optional April 1 / ?fools=1 gags: falling notes, silly labels, tiered fake “PulsePro Plus/Pro/…” unlocks.
 (function() {
     const FOOLS_LS_KEY = 'pulsepro-fools';
+    /** MIDI note 60 — blocked in fools mode with a fake “Pro” upsell. */
+    const MIDDLE_C_MIDI_NOTE = 60;
     const MAX_PARTICLES = 200;
     const GRAVITY_PX = 520;
     const FLOOR_FRICTION = 0.88;
@@ -213,6 +215,66 @@
     let particles = [];
     let lastPhysicsWallMs = 0;
 
+    /** Sequential tier label for the next upgrade (first = Plus, then Pro, …). */
+    const FOOLS_TIER_NAMES = ['Plus', 'Pro', 'Pro Plus', 'Deluxe', 'Premier', 'Ultimate', 'Supreme'];
+    let foolsUpgradeCount = 0;
+    /** Which paywalled features are cleared this session (until page reload). */
+    const foolsFeatureUnlocked = {
+        middleC: false,
+        blackKeys: false,
+        verticalRoll: false,
+        eraser: false,
+        fileNew: false,
+    };
+    const FOOLS_FEATURE_COPY = {
+        middleC: {
+            title: 'The note everyone wants',
+            subTemplate: function(tier) {
+                return 'Upgrade to <strong>PulsePro ' + tier + '</strong> to compose on the most coveted pitch in Western music.';
+            },
+            bulletHtml: '<strong>Middle C</strong> — MIDI 60; center of the hype cycle',
+            successSub: 'Middle C is unlocked. Go make radio hits (or lunch music).',
+        },
+        blackKeys: {
+            title: 'Color outside the lines',
+            subTemplate: function(tier) {
+                return 'Upgrade to <strong>PulsePro ' + tier + '</strong> for access to the <em>other</em> keys — the dark ones.';
+            },
+            bulletHtml: '<strong>Black keys</strong> — C#, D#, F#, G#, A# (accidental royalty)',
+            successSub: 'Black keys are yours. Sharps and flats just became legal tender.',
+        },
+        verticalRoll: {
+            title: 'Rotate the universe',
+            subTemplate: function(tier) {
+                return 'Upgrade to <strong>PulsePro ' + tier + '</strong> to flip the piano roll vertical — time goes up, vibes go sideways.';
+            },
+            bulletHtml: '<strong>Vertical piano roll</strong> — for when horizontal is “too mainstream”',
+            successSub: 'Vertical mode unlocked. May your scroll wheel find new purpose.',
+        },
+        eraser: {
+            title: 'Erase with confidence',
+            subTemplate: function(tier) {
+                return 'Upgrade to <strong>PulsePro ' + tier + '</strong> and finally remove notes without pretending it was intentional.';
+            },
+            bulletHtml: '<strong>Note eraser tool</strong> — mistakes, meet your budget-friendly nemesis',
+            successSub: 'Eraser unlocked. Use your new power for good (mostly).',
+        },
+        fileNew: {
+            title: 'Start completely over',
+            subTemplate: function(tier) {
+                return 'Upgrade to <strong>PulsePro ' + tier + '</strong> for a pristine project — <strong>File ▸ New</strong> included.';
+            },
+            bulletHtml: '<strong>File ▸ New</strong> — blank slate energy, now with fewer metaphors',
+            successSub: 'You can make new projects again. The old one forgives you (we checked).',
+        },
+    };
+
+    /** @param {number} midiNote */
+    function isMidiBlackKey(midiNote) {
+        const k = ((((midiNote | 0) % 12) + 12) % 12);
+        return k === 1 || k === 3 || k === 6 || k === 8 || k === 10;
+    }
+
     function isFoolsModeEnabled() {
         try {
             const p = new URLSearchParams(window.location.search).get('fools');
@@ -223,6 +285,202 @@
         } catch (e) { /* ignore */ }
         const d = new Date();
         return d.getMonth() === 3 && d.getDate() === 1;
+    }
+
+    function isFoolsFeatureUnlocked(key) {
+        if (!isFoolsModeEnabled()) return true;
+        return !!foolsFeatureUnlocked[key];
+    }
+
+    function unlockFoolsFeature(key) {
+        if (foolsFeatureUnlocked.hasOwnProperty(key)) foolsFeatureUnlocked[key] = true;
+    }
+
+    let pendingFoolsUpgradeFeatureId = null;
+
+    /**
+     * True when Middle C should be blocked (April Fools on and not yet unlocked this session).
+     * @param {number} midiNote 0–127
+     */
+    function shouldBlockMiddleC(midiNote) {
+        if (!isFoolsModeEnabled() || isFoolsFeatureUnlocked('middleC')) return false;
+        return (midiNote | 0) === MIDDLE_C_MIDI_NOTE;
+    }
+
+    function shouldBlockBlackKey(midiNote) {
+        if (!isFoolsModeEnabled() || isFoolsFeatureUnlocked('blackKeys')) return false;
+        return isMidiBlackKey(midiNote);
+    }
+
+    function shouldBlockVerticalRoll() {
+        return isFoolsModeEnabled() && !isFoolsFeatureUnlocked('verticalRoll');
+    }
+
+    function shouldBlockEraser() {
+        return isFoolsModeEnabled() && !isFoolsFeatureUnlocked('eraser');
+    }
+
+    function shouldBlockFileNew() {
+        return isFoolsModeEnabled() && !isFoolsFeatureUnlocked('fileNew');
+    }
+
+    function updateFoolsSashForTier(tierLabel) {
+        let sash = document.getElementById('fools-pro-mode-sash');
+        if (!sash) {
+            sash = document.createElement('div');
+            sash.id = 'fools-pro-mode-sash';
+            sash.className = 'fools-pro-mode-sash';
+            sash.setAttribute('role', 'status');
+            sash.setAttribute('aria-live', 'polite');
+            sash.innerHTML =
+                '<span class="fools-pro-mode-sash-inner">' +
+                '<span class="fools-pro-mode-sash-title"></span>' +
+                '</span>';
+            document.body.appendChild(sash);
+        }
+        const upper = String(tierLabel).toUpperCase();
+        sash.setAttribute('aria-label', tierLabel);
+        const st = sash.querySelector('.fools-pro-mode-sash-title');
+        if (st) st.textContent = upper;
+        sash.classList.toggle('fools-pro-mode-sash-long', upper.indexOf(' ') >= 0 || upper.length > 7);
+        sash.classList.add('fools-pro-mode-sash-visible');
+    }
+
+    let proDialogEscapeHandler = null;
+
+    function resetProUpgradeDialogContent(el) {
+        if (!el) return;
+        pendingFoolsUpgradeFeatureId = null;
+        const card = el.querySelector('.fools-pro-upgrade-card');
+        if (card) card.classList.remove('fools-pro-upgrade-success-flash');
+        const ribbon = el.querySelector('#fools-pro-upgrade-ribbon');
+        if (ribbon) ribbon.textContent = 'LIMITED TIME';
+        const title2 = el.querySelector('#fools-pro-upgrade-title');
+        const sub2 = el.querySelector('#fools-pro-upgrade-sub') || el.querySelector('.fools-pro-upgrade-sub');
+        const li = el.querySelector('#fools-pro-upgrade-feature-li');
+        const feat = el.querySelector('.fools-pro-upgrade-features');
+        const fine = el.querySelector('.fools-pro-upgrade-fine');
+        const act = el.querySelector('.fools-pro-upgrade-actions');
+        if (title2) title2.textContent = 'Unlock the full experience';
+        if (sub2) sub2.innerHTML = '';
+        if (li) li.innerHTML = '';
+        if (feat) feat.style.display = '';
+        if (fine) fine.style.display = '';
+        if (act) act.style.display = '';
+    }
+
+    function closeProUpgradeDialog(overlay) {
+        if (!overlay) return;
+        resetProUpgradeDialogContent(overlay);
+        overlay.classList.add('hidden');
+        overlay.setAttribute('aria-hidden', 'true');
+        if (proDialogEscapeHandler) {
+            document.removeEventListener('keydown', proDialogEscapeHandler);
+            proDialogEscapeHandler = null;
+        }
+    }
+
+    function applyFoolsUpgradeDialogContent(el, featureKey) {
+        const cfg = FOOLS_FEATURE_COPY[featureKey];
+        if (!cfg) return;
+        pendingFoolsUpgradeFeatureId = featureKey;
+        const tierIdx = Math.min(foolsUpgradeCount, FOOLS_TIER_NAMES.length - 1);
+        const tier = FOOLS_TIER_NAMES[tierIdx];
+        const title = el.querySelector('#fools-pro-upgrade-title');
+        if (title) title.textContent = cfg.title;
+        const sub = el.querySelector('#fools-pro-upgrade-sub');
+        if (sub) sub.innerHTML = cfg.subTemplate(tier);
+        const li = el.querySelector('#fools-pro-upgrade-feature-li');
+        if (li) li.innerHTML = '<span class="fools-pro-feature-check">✓</span> ' + cfg.bulletHtml;
+    }
+
+    function wireFoolsUpgradeDialog(el) {
+        const cancel = el.querySelector('#fools-pro-upgrade-cancel');
+        const cta = el.querySelector('#fools-pro-upgrade-cta');
+        const backdrop = el.querySelector('.fools-pro-upgrade-backdrop');
+        cancel.addEventListener('click', function() { closeProUpgradeDialog(el); });
+        if (backdrop) backdrop.addEventListener('click', function() { closeProUpgradeDialog(el); });
+        cta.addEventListener('click', function() {
+            const key = pendingFoolsUpgradeFeatureId;
+            const cfg = key && FOOLS_FEATURE_COPY[key];
+            if (!cfg) {
+                closeProUpgradeDialog(el);
+                return;
+            }
+            const tierSold = FOOLS_TIER_NAMES[Math.min(foolsUpgradeCount, FOOLS_TIER_NAMES.length - 1)];
+            unlockFoolsFeature(key);
+            foolsUpgradeCount++;
+            updateFoolsSashForTier(tierSold);
+            const card = el.querySelector('.fools-pro-upgrade-card');
+            if (card) {
+                card.classList.add('fools-pro-upgrade-success-flash');
+                const title = el.querySelector('#fools-pro-upgrade-title');
+                const sub = el.querySelector('#fools-pro-upgrade-sub');
+                const feat = el.querySelector('.fools-pro-upgrade-features');
+                const fine = el.querySelector('.fools-pro-upgrade-fine');
+                const act = el.querySelector('.fools-pro-upgrade-actions');
+                if (title) title.textContent = 'You\'re in!';
+                if (sub) sub.innerHTML = cfg.successSub + ' <span class="fools-pro-upgrade-heart">♥</span>';
+                if (feat) feat.style.display = 'none';
+                if (fine) fine.style.display = 'none';
+                if (act) act.style.display = 'none';
+            }
+            pendingFoolsUpgradeFeatureId = null;
+            window.setTimeout(function() { closeProUpgradeDialog(el); }, 1400);
+        });
+    }
+
+    function showFoolsUpgradeDialog(featureKey) {
+        if (!isFoolsModeEnabled()) return;
+        if (!FOOLS_FEATURE_COPY[featureKey] || isFoolsFeatureUnlocked(featureKey)) return;
+        let el = document.getElementById('fools-pro-upgrade-dialog');
+        if (el && !el.querySelector('#fools-pro-upgrade-feature-li')) {
+            el.remove();
+            el = null;
+        }
+        if (el && !el.classList.contains('hidden')) return;
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'fools-pro-upgrade-dialog';
+            el.className = 'hidden';
+            el.setAttribute('role', 'dialog');
+            el.setAttribute('aria-modal', 'true');
+            el.setAttribute('aria-labelledby', 'fools-pro-upgrade-title');
+            el.innerHTML =
+                '<div class="fools-pro-upgrade-backdrop" aria-hidden="true"></div>' +
+                '<div class="fools-pro-upgrade-card">' +
+                '<div class="fools-pro-upgrade-ribbon" id="fools-pro-upgrade-ribbon" aria-hidden="true">LIMITED TIME</div>' +
+                '<div class="fools-pro-upgrade-hero" aria-hidden="true">' +
+                '<span class="fools-pro-upgrade-hero-icon">🎹</span>' +
+                '<span class="fools-pro-upgrade-hero-rays"></span>' +
+                '</div>' +
+                '<h2 id="fools-pro-upgrade-title" class="fools-pro-upgrade-title"></h2>' +
+                '<p id="fools-pro-upgrade-sub" class="fools-pro-upgrade-sub"></p>' +
+                '<ul class="fools-pro-upgrade-features" aria-label="This upgrade includes">' +
+                '<li id="fools-pro-upgrade-feature-li"></li>' +
+                '</ul>' +
+                '<p class="fools-pro-upgrade-fine">* Limited time offer available through April 1st.</p>' +
+                '<div class="fools-pro-upgrade-actions">' +
+                '<button type="button" class="fools-pro-upgrade-btn fools-pro-upgrade-btn-secondary" id="fools-pro-upgrade-cancel">Cancel</button>' +
+                '<button type="button" class="fools-pro-upgrade-btn fools-pro-upgrade-btn-cta" id="fools-pro-upgrade-cta">Upgrade Now</button>' +
+                '</div>' +
+                '</div>';
+            document.body.appendChild(el);
+            wireFoolsUpgradeDialog(el);
+        }
+        applyFoolsUpgradeDialogContent(el, featureKey);
+        el.classList.remove('hidden');
+        el.setAttribute('aria-hidden', 'false');
+        if (proDialogEscapeHandler) document.removeEventListener('keydown', proDialogEscapeHandler);
+        proDialogEscapeHandler = function(ev) {
+            if (ev.key === 'Escape') {
+                ev.preventDefault();
+                closeProUpgradeDialog(el);
+            }
+        };
+        document.addEventListener('keydown', proDialogEscapeHandler);
+        const ctaFocus = el.querySelector('#fools-pro-upgrade-cta');
+        if (ctaFocus) window.setTimeout(function() { ctaFocus.focus(); }, 0);
     }
 
     function reset() {
@@ -471,6 +729,14 @@
     }
 
     window.pulseProFoolsIsEnabled = isFoolsModeEnabled;
+    window.pulseProFoolsShouldBlockMiddleC = shouldBlockMiddleC;
+    window.pulseProFoolsShouldBlockBlackKey = shouldBlockBlackKey;
+    window.pulseProFoolsShouldBlockVerticalRoll = shouldBlockVerticalRoll;
+    window.pulseProFoolsShouldBlockEraser = shouldBlockEraser;
+    window.pulseProFoolsShouldBlockFileNew = shouldBlockFileNew;
+    window.pulseProFoolsShowUpgradeDialog = showFoolsUpgradeDialog;
+    /** @deprecated Use pulseProFoolsShowUpgradeDialog('middleC') */
+    window.pulseProFoolsShowProUpgradeDialog = function() { showFoolsUpgradeDialog('middleC'); };
     window.pulseProFoolsReset = reset;
     window.pulseProFoolsNoteIsKnocked = function(id) {
         return knockedIds.has(id);

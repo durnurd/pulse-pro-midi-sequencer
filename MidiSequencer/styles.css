@@ -1129,6 +1129,258 @@ select.timesig-listbox:focus {
 #confirm-yes { background: var(--accent); color: #fff; }
 #confirm-no { background: var(--btn-bg); color: var(--text); }
 
+/* April Fools: fake “Pro Mode” upsell when Middle C is “locked” */
+#fools-pro-upgrade-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+}
+#fools-pro-upgrade-dialog.hidden { display: none; }
+.fools-pro-upgrade-backdrop {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(255, 215, 0, 0.12), rgba(0, 0, 0, 0.75));
+    cursor: pointer;
+}
+.fools-pro-upgrade-card {
+    position: relative;
+    max-width: 420px;
+    width: 100%;
+    border-radius: 16px;
+    padding: 0 0 20px;
+    overflow: hidden;
+    background: linear-gradient(165deg, #2a1f4e 0%, #1a1530 45%, #0d0a18 100%);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    box-shadow:
+        0 0 0 2px rgba(255, 215, 0, 0.55),
+        0 24px 48px rgba(0, 0, 0, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #f0e8ff;
+    animation: fools-pro-card-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes fools-pro-card-enter {
+    from { opacity: 0; transform: scale(0.92) translateY(16px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.fools-pro-upgrade-card.fools-pro-upgrade-success-flash {
+    animation: fools-pro-success-pulse 0.6s ease-out 2;
+}
+@keyframes fools-pro-success-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.55), 0 24px 48px rgba(0, 0, 0, 0.55); }
+    50% { box-shadow: 0 0 0 3px rgba(80, 250, 180, 0.9), 0 28px 56px rgba(80, 250, 180, 0.2); }
+}
+.fools-pro-upgrade-ribbon {
+    position: absolute;
+    top: 18px;
+    right: -32px;
+    transform: rotate(42deg);
+    background: linear-gradient(90deg, #ff6b35, #ffd700, #ff6b35);
+    color: #1a0a2e;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    padding: 6px 40px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    z-index: 2;
+}
+.fools-pro-upgrade-hero {
+    position: relative;
+    height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 30% 20%, rgba(255, 105, 180, 0.35), transparent 45%),
+        radial-gradient(circle at 70% 80%, rgba(0, 200, 255, 0.25), transparent 40%),
+        linear-gradient(180deg, #4c1d95 0%, #1e1b4b 100%);
+    border-bottom: 1px solid rgba(255, 215, 0, 0.25);
+}
+.fools-pro-upgrade-hero-icon {
+    font-size: 52px;
+    line-height: 1;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
+    z-index: 1;
+    animation: fools-pro-bounce 2s ease-in-out infinite;
+}
+@keyframes fools-pro-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+}
+/* Conic-gradient rays only look correct in a square/circle; full-hero rectangle looked like a spinning slab */
+.fools-pro-upgrade-hero-rays {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 110%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    margin: 0;
+    background: repeating-conic-gradient(
+        from 0deg,
+        transparent 0deg 10deg,
+        rgba(255, 215, 0, 0.075) 10deg 20deg
+    );
+    animation: fools-pro-hero-rays-spin 24s linear infinite;
+    pointer-events: none;
+}
+@keyframes fools-pro-hero-rays-spin {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+.fools-pro-upgrade-title {
+    font-size: 1.35rem;
+    font-weight: 800;
+    text-align: center;
+    margin: 18px 20px 8px;
+    background: linear-gradient(90deg, #fff, #ffd700, #fff);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: fools-pro-shine 3s linear infinite;
+}
+@keyframes fools-pro-shine {
+    to { background-position: 200% center; }
+}
+.fools-pro-upgrade-sub {
+    text-align: center;
+    margin: 0 20px 14px;
+    font-size: 14px;
+    line-height: 1.45;
+    opacity: 0.92;
+}
+.fools-pro-upgrade-sub strong {
+    color: #ffd700;
+}
+.fools-pro-upgrade-highlight {
+    color: #7cf0ff;
+    font-weight: 700;
+}
+.fools-pro-upgrade-features {
+    list-style: none;
+    margin: 0 16px 12px;
+    padding: 12px 14px;
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 10px;
+    border: 1px solid rgba(255, 215, 0, 0.15);
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.fools-pro-upgrade-features li {
+    margin-bottom: 6px;
+    padding-left: 2px;
+}
+.fools-pro-upgrade-features li:last-child { margin-bottom: 0; }
+.fools-pro-feature-check {
+    color: #4ade80;
+    font-weight: bold;
+    margin-right: 4px;
+}
+.fools-pro-upgrade-fine {
+    font-size: 10px;
+    opacity: 0.55;
+    text-align: center;
+    margin: 0 20px 14px;
+    line-height: 1.35;
+}
+.fools-pro-upgrade-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 0 20px;
+}
+.fools-pro-upgrade-btn {
+    min-width: 120px;
+    padding: 10px 20px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.fools-pro-upgrade-btn:active { transform: scale(0.97); }
+.fools-pro-upgrade-btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e8e0f8;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.fools-pro-upgrade-btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+.fools-pro-upgrade-btn-cta {
+    background: linear-gradient(180deg, #ffd700 0%, #ff8c00 100%);
+    color: #1a0a12;
+    box-shadow: 0 4px 16px rgba(255, 140, 0, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.fools-pro-upgrade-btn-cta:hover {
+    box-shadow: 0 6px 22px rgba(255, 200, 80, 0.55);
+}
+.fools-pro-upgrade-heart {
+    color: #ff6b9d;
+}
+
+/* April Fools: corner sash after fake “Pro” upgrade — tight to bottom-right, shallow angle */
+#fools-pro-mode-sash {
+    position: fixed;
+    right: -34px;
+    bottom: 44px;
+    z-index: 280;
+    pointer-events: none;
+    opacity: 0;
+    transform: rotate(-30deg);
+    transform-origin: bottom right;
+    transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    filter: drop-shadow(-2px 4px 12px rgba(0, 0, 0, 0.35));
+    width: 150px;
+}
+#fools-pro-mode-sash.fools-pro-mode-sash-visible {
+    opacity: 1;
+    transform: rotate(-30deg);
+}
+.fools-pro-mode-sash-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 16px 8px;
+    background: linear-gradient(165deg, #fff4b8 0%, #ffd700 28%, #ff9f1c 72%, #e85d04 100%);
+    color: #1a0a12;
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    border-radius: 4px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.75),
+        0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.fools-pro-mode-sash-title {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 0.22em;
+    text-indent: 0.22em;
+    line-height: 1;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+#fools-pro-mode-sash.fools-pro-mode-sash-long .fools-pro-mode-sash-title {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-indent: 0.1em;
+    line-height: 1.15;
+    text-align: center;
+}
+
 #btn-theme { font-size: 16px; line-height: 1; }
 
 /* Full-screen saved-songs library */

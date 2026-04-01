@@ -1043,6 +1043,12 @@
     // Clear all
     const confirmDialog = document.getElementById('confirm-dialog');
     document.getElementById('btn-clear-all').addEventListener('click', function() {
+        if (typeof window.pulseProFoolsShouldBlockFileNew === 'function' && window.pulseProFoolsShouldBlockFileNew()) {
+            if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
+                window.pulseProFoolsShowUpgradeDialog('fileNew');
+            }
+            return;
+        }
         confirmDialog.classList.remove('hidden');
     });
     document.getElementById('confirm-yes').addEventListener('click', async function() {
@@ -1704,6 +1710,13 @@
             return;
         }
         if (next) {
+            if (typeof window.pulseProFoolsShouldBlockVerticalRoll === 'function' && window.pulseProFoolsShouldBlockVerticalRoll()) {
+                if (typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
+                    window.pulseProFoolsShowUpgradeDialog('verticalRoll');
+                }
+                updateVerticalRollMenuCheck();
+                return;
+            }
             _layoutSavedScrollYForVertical = state.scrollY;
             state.timelineHeaderScrollPx = state.scrollX;
             state.verticalTimePanPx = 0;
@@ -1757,7 +1770,12 @@
 
     try {
         if (localStorage.getItem(VERTICAL_ROLL_STORAGE_KEY) === '1') {
-            setVerticalPianoRoll(true);
+            if (typeof window.pulseProFoolsShouldBlockVerticalRoll === 'function' && window.pulseProFoolsShouldBlockVerticalRoll()) {
+                try { localStorage.removeItem(VERTICAL_ROLL_STORAGE_KEY); } catch (eRem) { /* ignore */ }
+                updateVerticalRollMenuCheck();
+            } else {
+                setVerticalPianoRoll(true);
+            }
         } else {
             updateVerticalRollMenuCheck();
         }

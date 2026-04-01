@@ -542,16 +542,35 @@ async function pasteNotes() {
     }
     if (!clipData && state.clipboard.length > 0) clipData = state.clipboard;
     if (!clipData || clipData.length === 0) return;
+    let pasteItems = clipData;
+    if (typeof window.pulseProFoolsIsEnabled === 'function' && window.pulseProFoolsIsEnabled()) {
+        let dialogFeature = null;
+        pasteItems = clipData.filter(function(c) {
+            if (typeof window.pulseProFoolsShouldBlockMiddleC === 'function' && window.pulseProFoolsShouldBlockMiddleC(c.note)) {
+                if (!dialogFeature) dialogFeature = 'middleC';
+                return false;
+            }
+            if (typeof window.pulseProFoolsShouldBlockBlackKey === 'function' && window.pulseProFoolsShouldBlockBlackKey(c.note)) {
+                if (!dialogFeature) dialogFeature = 'blackKeys';
+                return false;
+            }
+            return true;
+        });
+        if (dialogFeature && typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
+            window.pulseProFoolsShowUpgradeDialog(dialogFeature);
+        }
+    }
+    if (!pasteItems || pasteItems.length === 0) return;
     pushUndoState('paste notes');
     state.selectedNoteIds.clear();
     const baseTick = state.playbackTick;
     let maxEndTick = 0;
     
     // Check if all copied notes belong to the same track
-    const uniqueTracks = new Set(clipData.map(c => c.track));
+    const uniqueTracks = new Set(pasteItems.map(c => c.track));
     const isSingleTrack = uniqueTracks.size === 1;
     
-    for (const c of clipData) {
+    for (const c of pasteItems) {
         // If single track, paste to active track. Otherwise, keep original track (if valid)
         let trk = state.activeTrack;
         if (!isSingleTrack) {
