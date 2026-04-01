@@ -113,6 +113,7 @@ function pausePlayback() {
     }
     playbackActiveNotes.clear();
     state.playbackSoundingTracks.clear();
+    if (typeof window.pulseProFoolsReset === 'function') window.pulseProFoolsReset();
     updatePlaybackButtons();
 }
 
@@ -152,6 +153,7 @@ function stopPlayback(options) {
         playbackPBIndex = 0;
         playbackCCIndex = 0;
     }
+    if (typeof window.pulseProFoolsReset === 'function') window.pulseProFoolsReset();
     updatePlaybackButtons();
     renderAll();
 }
@@ -167,6 +169,7 @@ function togglePlayPause() {
 
 function playbackLoop() {
     if (!state.isPlaying) return;
+    const tickAtFrameStart = state.playbackTick;
     const elapsed = (performance.now() - state.playbackStartTime) / 1000;
     const wallAtStart = wallSecondsFromTick(state.playbackStartTick);
     const currentTick = tickFromWallSeconds(wallAtStart + elapsed);
@@ -180,6 +183,7 @@ function playbackLoop() {
     // Check if we've reached the end
     if (currentTick >= endTick && endTick > 0) {
         if (state.isRepeat) {
+            if (typeof window.pulseProFoolsOnRepeatRewind === 'function') window.pulseProFoolsOnRepeatRewind();
             state.playbackStartTime = performance.now();
             state.playbackStartTick = 0;
             state.playbackTick = 0;
@@ -201,6 +205,10 @@ function playbackLoop() {
         }
     } else {
         state.playbackTick = currentTick;
+    }
+
+    if (typeof window.pulseProFoolsOnPlaybackFrame === 'function') {
+        window.pulseProFoolsOnPlaybackFrame(tickAtFrameStart, state.playbackTick);
     }
 
     // Note on/off logic — track by note instance ID so back-to-back

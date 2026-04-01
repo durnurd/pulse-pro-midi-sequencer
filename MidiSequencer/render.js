@@ -183,6 +183,7 @@ function renderGridVertical() {
     const NOTE_RADIUS = 3;
     const isVelocityEditing = state.interactionData && state.interactionData.velocityEditing;
     for (const n of state.notes) {
+        if (typeof window.pulseProFoolsNoteIsKnocked === 'function' && window.pulseProFoolsNoteIsKnocked(n.id)) continue;
         const trk = state.tracks[n.track];
         if (trk && trk.hidden) continue;
         const xLeft = n.note * NOTE_HEIGHT - state.scrollX;
@@ -316,7 +317,7 @@ function renderGridVertical() {
             gridCtx.roundRect(xLeft + 1, yTop + 1, nw - 2, nh - 2, r);
             gridCtx.clip();
             const noteIsDrum = trk && trk.channel === 9;
-            gridCtx.fillText(midiNoteName(n.note, noteIsDrum), xLeft + 3, yTop + nh / 2);
+            gridCtx.fillText(displayMidiNoteName(n.note, noteIsDrum), xLeft + 3, yTop + nh / 2);
             gridCtx.restore();
         }
         gridCtx.globalAlpha = 1.0;
@@ -363,6 +364,10 @@ function renderGridVertical() {
             gridCtx.lineTo(w, ty);
             gridCtx.stroke();
         }
+    }
+
+    if (typeof window.pulseProFoolsDrawParticles === 'function') {
+        window.pulseProFoolsDrawParticles(gridCtx, state.scrollX, state.scrollY, w, h, NOTE_RADIUS);
     }
 
     const playY = seamY + pan;
@@ -459,6 +464,7 @@ function renderGrid() {
     const NOTE_RADIUS = 3; // corner radius for rounded note rectangles
     const isVelocityEditing = state.interactionData && state.interactionData.velocityEditing;
     for (const n of state.notes) {
+        if (typeof window.pulseProFoolsNoteIsKnocked === 'function' && window.pulseProFoolsNoteIsKnocked(n.id)) continue;
         // Skip hidden tracks
         const trk = state.tracks[n.track];
         if (trk && trk.hidden) continue;
@@ -604,7 +610,7 @@ function renderGrid() {
             gridCtx.roundRect(nx + 1, ny + 1, nw - 2, NOTE_HEIGHT - 2, r);
             gridCtx.clip();
             const noteIsDrum = trk && trk.channel === 9;
-            gridCtx.fillText(midiNoteName(n.note, noteIsDrum), nx + 3, ny + NOTE_HEIGHT / 2);
+            gridCtx.fillText(displayMidiNoteName(n.note, noteIsDrum), nx + 3, ny + NOTE_HEIGHT / 2);
             gridCtx.restore();
         }
         gridCtx.globalAlpha = 1.0;
@@ -641,6 +647,10 @@ function renderGrid() {
             gridCtx.lineTo(cx, h);
             gridCtx.stroke();
         }
+    }
+
+    if (typeof window.pulseProFoolsDrawParticles === 'function') {
+        window.pulseProFoolsDrawParticles(gridCtx, sx, sy, w, h, NOTE_RADIUS);
     }
 
     // Playback line
@@ -704,7 +714,7 @@ function renderKeyboardHorizontalStrip() {
         keyCtx.translate(x + NOTE_HEIGHT / 2, h / 2);
         keyCtx.rotate(-Math.PI / 2);
         const activeIsDrum = state.tracks[state.activeTrack] && state.tracks[state.activeTrack].channel === 9;
-        keyCtx.fillText(midiNoteName(noteNum, activeIsDrum), 0, 0);
+        keyCtx.fillText(displayMidiNoteName(noteNum, activeIsDrum), 0, 0);
         keyCtx.restore();
     }
 }
@@ -763,7 +773,7 @@ function renderKeyboard() {
         keyCtx.font = '10px monospace';
         keyCtx.textBaseline = 'middle';
         const activeIsDrum = state.tracks[state.activeTrack] && state.tracks[state.activeTrack].channel === 9;
-        keyCtx.fillText(midiNoteName(noteNum, activeIsDrum), 4, y + NOTE_HEIGHT / 2);
+        keyCtx.fillText(displayMidiNoteName(noteNum, activeIsDrum), 4, y + NOTE_HEIGHT / 2);
     }
 }
 

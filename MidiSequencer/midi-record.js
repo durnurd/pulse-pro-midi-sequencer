@@ -377,7 +377,7 @@ function pulseProDrawMidiRecordLiveNotes(gridCtx, sx, sy, w, h, NOTE_RADIUS, NOT
             gridCtx.roundRect(nx + 1, ny + 1, nw - 2, nh - 2, r);
             gridCtx.clip();
             const noteIsDrum = trk && trk.channel === 9;
-            gridCtx.fillText(midiNoteName(p.note, noteIsDrum), nx + 3, ny + nh / 2);
+            gridCtx.fillText(displayMidiNoteName(p.note, noteIsDrum), nx + 3, ny + nh / 2);
             gridCtx.restore();
         }
         gridCtx.restore();

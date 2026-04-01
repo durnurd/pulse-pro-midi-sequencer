@@ -217,6 +217,17 @@ function midiNoteName(note, isDrum) {
     return NOTE_NAMES[note % 12] + octave;
 }
 
+/**
+ * Label for piano roll / keys (April Fools may replace GM drum names via window.pulseProFoolsDrumDisplayName).
+ */
+function displayMidiNoteName(note, isDrum) {
+    if (isDrum && typeof window !== 'undefined' && typeof window.pulseProFoolsDrumDisplayName === 'function') {
+        const silly = window.pulseProFoolsDrumDisplayName(note);
+        if (silly != null && silly !== '') return silly;
+    }
+    return midiNoteName(note, isDrum);
+}
+
 // Is this a black key?
 function isBlackKey(note) {
     return BLACK_KEYS.has(note % 12);

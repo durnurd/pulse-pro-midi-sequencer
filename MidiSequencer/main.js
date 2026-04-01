@@ -23,9 +23,14 @@
     }
     window.updateKeyboardHeaderTrack = updateKeyboardHeaderTrack;
 
-    /** Lowercase text for matching: program number + instrument name. */
+    /** Lowercase text for matching: program number + instrument name (fools mode may substitute display name). */
     function instrumentSearchText(program) {
-        return (program + ': ' + GM_INSTRUMENTS[program]).toLowerCase();
+        let name = GM_INSTRUMENTS[program];
+        if (typeof window.pulseProFoolsInstrumentDisplayName === 'function') {
+            const alt = window.pulseProFoolsInstrumentDisplayName(program);
+            if (alt) name = alt;
+        }
+        return (program + ': ' + name).toLowerCase();
     }
 
     /** True if every character of query appears in haystack in order (subsequence). */
@@ -40,6 +45,16 @@
 
     function formatInstrumentLabel(program) {
         return program + ': ' + GM_INSTRUMENTS[program];
+    }
+
+    /** Channel list / picker label; may show April Fools substitute name while state keeps true program. */
+    function displayInstrumentLabel(program) {
+        let name = GM_INSTRUMENTS[program];
+        if (typeof window.pulseProFoolsInstrumentDisplayName === 'function') {
+            const alt = window.pulseProFoolsInstrumentDisplayName(program);
+            if (alt) name = alt;
+        }
+        return program + ': ' + name;
     }
 
     const instrumentComboOpenState = { close: null };
@@ -66,7 +81,7 @@
         trigger.title = 'Instrument — type to search when open';
         trigger.setAttribute('aria-haspopup', 'listbox');
         trigger.setAttribute('aria-expanded', 'false');
-        trigger.textContent = formatInstrumentLabel(initialProgram);
+        trigger.textContent = displayInstrumentLabel(initialProgram);
 
         const popover = document.createElement('div');
         popover.className = 'ch-instr-popover';
@@ -141,7 +156,7 @@
                 if (listIdx === 0) btn.classList.add('ch-instr-option-active');
                 btn.setAttribute('role', 'option');
                 btn.dataset.program = String(program);
-                btn.textContent = formatInstrumentLabel(program);
+                btn.textContent = displayInstrumentLabel(program);
                 btn.addEventListener('mousedown', function(e) {
                     e.preventDefault();
                 });
@@ -154,7 +169,7 @@
 
         function applyProgram(program) {
             closePopover();
-            trigger.textContent = formatInstrumentLabel(program);
+            trigger.textContent = displayInstrumentLabel(program);
             onPick(program);
             trigger.blur();
         }
@@ -179,7 +194,7 @@
         }
 
         wrap.syncInstrument = function(program) {
-            trigger.textContent = formatInstrumentLabel(program);
+            trigger.textContent = displayInstrumentLabel(program);
         };
 
         wrap.addEventListener('focusout', function() {
@@ -983,16 +998,68 @@
         removeSelectedNotes();
     };
 
+    async function tryLoadNewSongMidForFools() {
+        try {
+            const r = await fetch('NewSong.mid', { cache: 'no-store' });
+            if (!r.ok) return false;
+            const buf = await r.arrayBuffer();
+            if (!buf || buf.byteLength < 14) return false;
+            applyMidiImportFromArrayBuffer(buf, { skipUndo: true, clearSessionAutosave: false });
+            return true;
+        } catch (e) {
+            console.warn('NewSong.mid:', e);
+            return false;
+        }
+    }
+
+    function applyAfterNewProjectChromeReset() {
+        state.undoStack = [];
+        state.redoStack = [];
+        state.clipboard = [];
+        state.automationClipboard = null;
+        state.automationSelectTicks = null;
+        if (typeof window.aeSetTool === 'function') window.aeSetTool('line');
+        NOTE_HEIGHT = NOTE_HEIGHT_DEFAULT;
+        TOTAL_HEIGHT = TOTAL_MIDI_NOTES * NOTE_HEIGHT;
+        BEAT_WIDTH = BEAT_WIDTH_DEFAULT;
+        SNAP_WIDTH = BEAT_WIDTH / MIDI_TPQN;
+        state.scrollY = TOTAL_HEIGHT / 2 - 300;
+        state.automationExpandedHeightPx = 168;
+        state.automationEditorExpanded = false;
+        if (typeof window.aeSetAutomationEditorExpanded === 'function') {
+            window.aeSetAutomationEditorExpanded(false);
+        }
+        setAutomationOverlayFromUi('');
+        state.mode = 'idle';
+        state.interactionNote = null;
+        state.interactionData = null;
+        state.highlightedKeys.clear();
+        setTool('pencil');
+        syncUIAfterImport();
+        resizeCanvases();
+        renderAll();
+    }
+
     // Clear all
     const confirmDialog = document.getElementById('confirm-dialog');
     document.getElementById('btn-clear-all').addEventListener('click', function() {
         confirmDialog.classList.remove('hidden');
     });
-    document.getElementById('confirm-yes').addEventListener('click', function() {
+    document.getElementById('confirm-yes').addEventListener('click', async function() {
         // Stop playback first
         stopPlayback();
         if (typeof window.pulseProClearSessionAutosave === 'function') {
             void window.pulseProClearSessionAutosave();
+        }
+
+        if (typeof window.pulseProFoolsIsEnabled === 'function' && window.pulseProFoolsIsEnabled()) {
+            const loadedNew = await tryLoadNewSongMidForFools();
+            if (loadedNew) {
+                applyAfterNewProjectChromeReset();
+                confirmDialog.classList.add('hidden');
+                if (window.pulseProClearLibrarySongContext) window.pulseProClearLibrarySongContext();
+                return;
+            }
         }
 
         // Clear all note/automation data
@@ -1662,6 +1729,7 @@
             localStorage.setItem(VERTICAL_ROLL_STORAGE_KEY, state.verticalPianoRoll ? '1' : '0');
         } catch (err) { /* ignore */ }
         updateVerticalRollMenuCheck();
+        if (typeof window.pulseProFoolsReset === 'function') window.pulseProFoolsReset();
         renderAll();
     }
     window.setVerticalPianoRoll = setVerticalPianoRoll;
@@ -1767,11 +1835,23 @@
 
     void (async function() {
         resizeCanvases();
+        let loadedNewSongFools = false;
+        if (typeof window.pulseProFoolsIsEnabled === 'function' && window.pulseProFoolsIsEnabled()) {
+            loadedNewSongFools = await tryLoadNewSongMidForFools();
+            if (loadedNewSongFools) {
+                state.undoStack = [];
+                state.redoStack = [];
+                if (typeof window.pulseProClearLibrarySongContext === 'function') {
+                    window.pulseProClearLibrarySongContext();
+                }
+                applyAfterNewProjectChromeReset();
+            }
+        }
         let restoredAutosave = false;
-        if (typeof window.pulseProTryRestoreSessionAutosave === 'function') {
+        if (!loadedNewSongFools && typeof window.pulseProTryRestoreSessionAutosave === 'function') {
             restoredAutosave = await window.pulseProTryRestoreSessionAutosave();
         }
-        if (!restoredAutosave && typeof window.pulseProRestoreLastLibrarySongOnLoad === 'function') {
+        if (!loadedNewSongFools && !restoredAutosave && typeof window.pulseProRestoreLastLibrarySongOnLoad === 'function') {
             await window.pulseProRestoreLastLibrarySongOnLoad();
         }
         resizeCanvases();
