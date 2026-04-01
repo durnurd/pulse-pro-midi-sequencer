@@ -1,127 +1,38 @@
-// audio.js - SoundFont-based audio engine using SpessaSynth (worklet path, with worker fallback for older Chrome).
-// Default SoundFont is fetched on load without creating AudioContext; the context is created on first user gesture
-// (see _armDocumentUnlockOnce and init() from UI) to satisfy browser autoplay policy.
+// audio.js - SoundFont-based audio engine using SpessaSynth
 class AudioEngine {
     constructor() {
         this.ctx = null;
         this.activeNotes = new Map(); // key -> true (for compatibility with interactions2.js)
         this.channelInstruments = new Array(16).fill(0);
-        this.synth = null;          // SpessaSynth WorkletSynthesizer or WorkerSynthesizer
+        this.synth = null;          // SpessaSynth WorkletSynthesizer
         this.ready = false;         // true once synth + soundfont are loaded
         this._initPromise = null;
         this._currentSoundFontId = null;
         this._loadedSoundFonts = new Map(); // id → ArrayBuffer (cached for switching)
-        this._spessaWorker = null;
-        this._audioUnlockGo = null;
-        this._stagedSoundFontId = null;
     }
 
     async init() {
         if (this._initPromise) return this._initPromise;
-        this._initPromise = this._doInit().catch((err) => {
-            this._initPromise = null;
-            throw err;
-        });
+        this._initPromise = this._doInit();
         return this._initPromise;
     }
 
-    _disarmDocumentUnlock() {
-        if (this._audioUnlockGo) {
-            document.removeEventListener('pointerdown', this._audioUnlockGo, true);
-            document.removeEventListener('keydown', this._audioUnlockGo, true);
-            this._audioUnlockGo = null;
-        }
-    }
-
-    _armDocumentUnlockOnce() {
-        if (this._audioUnlockGo || this.ctx) return;
-        const go = () => {
-            void this.init();
-        };
-        this._audioUnlockGo = go;
-        document.addEventListener('pointerdown', go, true);
-        document.addEventListener('keydown', go, true);
-    }
-
     async _doInit() {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) {
-            throw new Error('Web Audio API is not available in this browser.');
-        }
-        if (!this.ctx) {
-            this.ctx = new AC();
-            if (this.ctx.state === 'suspended') {
-                void this.ctx.resume();
-            }
-        }
+        if (this.ctx) return;
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-        if (this.synth) {
-            await this._flushStagedSoundFontIfAny();
-            this._disarmDocumentUnlock();
-            return;
-        }
-
+        // Load the SpessaSynth worklet processor from CDN
         const processorURL = 'https://cdn.jsdelivr.net/npm/spessasynth_lib@4.2.2/dist/spessasynth_processor.min.js';
-        let workletOk = false;
-        try {
-            await this.ctx.audioWorklet.addModule(processorURL);
-            workletOk = true;
-        } catch (err) {
-            console.warn('SpessaSynth worklet addModule failed:', err);
-        }
+        await this.ctx.audioWorklet.addModule(processorURL);
 
-        if (workletOk && window.SpessaSynthWorkletSynthesizer) {
-            try {
-                this.synth = new window.SpessaSynthWorkletSynthesizer(this.ctx);
-            } catch (err) {
-                console.warn('SpessaSynth WorkletSynthesizer constructor failed:', err);
-                this.synth = null;
-            }
-        }
-
-        if (!this.synth) {
-            const deadline = Date.now() + 8000;
-            let inst = window.__spessaWorkerSynthInstaller;
-            while (
-                (!inst || !inst.WorkerSynthesizer || !inst.workerModuleURL) &&
-                Date.now() < deadline
-            ) {
-                await new Promise((r) => setTimeout(r, 40));
-                inst = window.__spessaWorkerSynthInstaller;
-            }
-            if (!inst || !inst.WorkerSynthesizer || !inst.workerModuleURL) {
-                throw new Error(
-                    'Audio engine could not start (worklet failed and worker fallback is not configured).'
-                );
-            }
-            await inst.WorkerSynthesizer.registerPlaybackWorklet(this.ctx);
-            this._spessaWorker = new Worker(inst.workerModuleURL, { type: 'module' });
-            this.synth = new inst.WorkerSynthesizer(
-                this.ctx,
-                this._spessaWorker.postMessage.bind(this._spessaWorker)
-            );
-            this._spessaWorker.onmessage = (e) => this.synth.handleWorkerMessage(e.data);
-        }
-
+        // Create the synthesizer (WorkletSynthesizer is set on window by the module loader)
+        this.synth = new window.SpessaSynthWorkletSynthesizer(this.ctx);
         this.synth.connect(this.ctx.destination);
-        if (this.ctx.state === 'suspended') {
-            await this.ctx.resume();
-        }
-        await this._flushStagedSoundFontIfAny();
-        this._disarmDocumentUnlock();
     }
 
-    async _flushStagedSoundFontIfAny() {
-        const id = this._stagedSoundFontId;
-        if (id == null || !this.synth) return;
-        this._stagedSoundFontId = null;
-        const buf = this._loadedSoundFonts.get(id);
-        if (!buf) return;
-        await this._applySoundFontBuffer(buf, id);
-    }
-
-    // Load a SoundFont file by URL. Returns true if bytes are ready (synth applies after first audio unlock).
+    // Load a SoundFont file by URL. Returns true if the font was applied, false on failure.
     async loadSoundFont(url, id) {
+        await this.init();
         const indicator = document.getElementById('sf-loading-indicator');
         if (indicator) indicator.style.display = 'inline';
 
@@ -131,16 +42,6 @@ class AudioEngine {
                 throw new Error(`SoundFont HTTP ${response.status} for ${url}`);
             }
             const buffer = await response.arrayBuffer();
-            if (!this._loadedSoundFonts.has(id)) {
-                this._loadedSoundFonts.set(id, buffer.slice(0));
-            }
-            if (!this.ctx) {
-                this._stagedSoundFontId = id;
-                this.ready = false;
-                this._armDocumentUnlockOnce();
-                return true;
-            }
-            await this.init();
             await this._applySoundFontBuffer(buffer, id);
             return true;
         } catch (err) {
@@ -200,27 +101,11 @@ class AudioEngine {
             console.error('SoundFont not cached:', id);
             return;
         }
-        if (!this.ctx) {
-            this._stagedSoundFontId = id;
-            return;
-        }
         await this._applySoundFontBuffer(buffer, id);
     }
 
     noteOn(note, channel = 0, velocity = 100) {
-        if (!this.synth || !this.ready) {
-            void (async () => {
-                try {
-                    await this.init();
-                    await this._flushStagedSoundFontIfAny();
-                    if (!this.synth || !this.ready) return;
-                    this.noteOn(note, channel, velocity);
-                } catch (e) {
-                    console.error(e);
-                }
-            })();
-            return;
-        }
+        if (!this.synth || !this.ready) return;
         if (this.ctx.state === 'suspended') this.ctx.resume();
         const key = `${channel}-${note}`;
         if (this.activeNotes.has(key)) {

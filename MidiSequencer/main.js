@@ -660,8 +660,9 @@
 
     // Playback controls
     document.getElementById('btn-play').addEventListener('click', function() {
+        audioEngine.init();
         blurIfActive(this);
-        void startPlayback();
+        startPlayback();
     });
     document.getElementById('btn-pause').addEventListener('click', function() {
         blurIfActive(this);
@@ -1009,7 +1010,7 @@
         state.highlightedKeys.clear();
 
         // Reset tool
-        setTool('pencil');
+        setTool('cursor');
 
         // Sync channel list UI
         syncUIAfterImport();
