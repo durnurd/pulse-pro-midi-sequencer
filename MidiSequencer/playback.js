@@ -74,6 +74,17 @@ function startPlayback() {
     playbackLoop();
 }
 
+/** Apply editor pitch-bend range (RPN 0,0) on the built-in synth for all channels at timeline tick. */
+function applySynthEditorPitchBendSensitivityAtTick(tick) {
+    const t = tick | 0;
+    for (let ch = 0; ch < 16; ch++) {
+        const semi = typeof window.getPitchBendSensitivitySemitones === 'function'
+            ? window.getPitchBendSensitivitySemitones(ch, t)
+            : 2;
+        audioEngine.setPitchBendSensitivitySemitones(ch, semi);
+    }
+}
+
 // Find the correct automation index for a given tick and apply the most recent
 // pitch bend / CC values so playback starts with the right sound state.
 function seekAutomationTo(tick) {
@@ -86,15 +97,6 @@ function seekAutomationTo(tick) {
     while (playbackPBIndex < pbs.length && pbs[playbackPBIndex].tick <= tick) playbackPBIndex++;
     playbackCCIndex = 0;
     while (playbackCCIndex < ccs.length && ccs[playbackCCIndex].tick <= tick) playbackCCIndex++;
-    // Apply the most recent pitch bend per channel up to this tick
-    const lastPB = new Map();
-    for (let i = 0; i < playbackPBIndex; i++) {
-        lastPB.set(pbs[i].channel, pbs[i].value);
-    }
-    for (const [ch, val] of lastPB) {
-        audioEngine.pitchWheel(ch, val);
-    }
-    // Apply the most recent CC per channel+controller up to this tick
     const lastCC = new Map();
     for (let i = 0; i < playbackCCIndex; i++) {
         const e = ccs[i];
@@ -103,10 +105,27 @@ function seekAutomationTo(tick) {
     for (const info of lastCC.values()) {
         audioEngine.controllerChange(info.channel, info.controller, info.value);
     }
+    applySynthEditorPitchBendSensitivityAtTick(tick);
+    const lastPB = new Map();
+    for (let i = 0; i < playbackPBIndex; i++) {
+        lastPB.set(pbs[i].channel, pbs[i].value);
+    }
+    for (const [ch, val] of lastPB) {
+        audioEngine.pitchWheel(ch, val);
+    }
     if (typeof window.pulseProMidiOutAfterAutomationSeek === 'function') {
-        window.pulseProMidiOutAfterAutomationSeek(lastPB, lastCC);
+        window.pulseProMidiOutAfterAutomationSeek(lastPB, lastCC, tick);
     }
 }
+
+/** Re-apply built-in synth + MIDI out automation from the timeline at the current playhead (e.g. after editing pitch range). */
+function pulseProSeekAutomationToPlayhead() {
+    if (typeof audioEngine !== 'undefined' && audioEngine && typeof audioEngine.init === 'function') {
+        void audioEngine.init();
+    }
+    seekAutomationTo(state.playbackTick | 0);
+}
+window.pulseProSeekAutomationToPlayhead = pulseProSeekAutomationToPlayhead;
 
 /**
  * After appending pitch-bend or CC events during live MIDI record, advance scan indices so the
@@ -283,26 +302,40 @@ function playbackLoop() {
     playbackActiveNotes = newActive;
     syncPlaybackSoundingTracksFromMap(newActive);
 
-    // Process pitch bend events up to current tick
     const pbs = state.pitchBends;
-    while (playbackPBIndex < pbs.length && pbs[playbackPBIndex].tick <= state.playbackTick) {
-        const e = pbs[playbackPBIndex];
-        audioEngine.pitchWheel(e.channel, e.value);
-        if (typeof window.pulseProMidiOutPitchWheel === 'function') {
-            window.pulseProMidiOutPitchWheel(e.channel, e.value);
-        }
-        playbackPBIndex++;
-    }
-
-    // Process controller change events up to current tick
     const ccs = state.controllerChanges;
-    while (playbackCCIndex < ccs.length && ccs[playbackCCIndex].tick <= state.playbackTick) {
-        const e = ccs[playbackCCIndex];
-        audioEngine.controllerChange(e.channel, e.controller, e.value);
-        if (typeof window.pulseProMidiOutControllerChange === 'function') {
-            window.pulseProMidiOutControllerChange(e.channel, e.controller, e.value);
+    const playT = state.playbackTick;
+    const PRI_P = 1;
+    const PRI_C = 2;
+    while (true) {
+        const candidates = [];
+        if (playbackPBIndex < pbs.length && pbs[playbackPBIndex].tick <= playT) {
+            candidates.push({ kind: 'p', tick: pbs[playbackPBIndex].tick, pri: PRI_P });
         }
-        playbackCCIndex++;
+        if (playbackCCIndex < ccs.length && ccs[playbackCCIndex].tick <= playT) {
+            candidates.push({ kind: 'c', tick: ccs[playbackCCIndex].tick, pri: PRI_C });
+        }
+        if (candidates.length === 0) break;
+        candidates.sort(function(a, b) {
+            if (a.tick !== b.tick) return a.tick - b.tick;
+            return a.pri - b.pri;
+        });
+        const first = candidates[0].kind;
+        if (first === 'p') {
+            const e = pbs[playbackPBIndex];
+            audioEngine.pitchWheel(e.channel, e.value);
+            if (typeof window.pulseProMidiOutPitchWheel === 'function') {
+                window.pulseProMidiOutPitchWheel(e.channel, e.value);
+            }
+            playbackPBIndex++;
+        } else {
+            const e = ccs[playbackCCIndex];
+            audioEngine.controllerChange(e.channel, e.controller, e.value);
+            if (typeof window.pulseProMidiOutControllerChange === 'function') {
+                window.pulseProMidiOutControllerChange(e.channel, e.controller, e.value);
+            }
+            playbackCCIndex++;
+        }
     }
 
     if (state.verticalPianoRoll) {
@@ -481,13 +514,6 @@ function seekLibraryPreviewAutomation(tick, pbs, ccs, st) {
     while (st.pbIndex < pbs.length && pbs[st.pbIndex].tick <= tick) st.pbIndex++;
     st.ccIndex = 0;
     while (st.ccIndex < ccs.length && ccs[st.ccIndex].tick <= tick) st.ccIndex++;
-    const lastPB = new Map();
-    for (let i = 0; i < st.pbIndex; i++) {
-        lastPB.set(pbs[i].channel, pbs[i].value);
-    }
-    for (const [ch, val] of lastPB) {
-        audioEngine.pitchWheel(ch, val);
-    }
     const lastCC = new Map();
     for (let i = 0; i < st.ccIndex; i++) {
         const e = ccs[i];
@@ -496,8 +522,22 @@ function seekLibraryPreviewAutomation(tick, pbs, ccs, st) {
     for (const info of lastCC.values()) {
         audioEngine.controllerChange(info.channel, info.controller, info.value);
     }
+    for (let ch = 0; ch < 16; ch++) {
+        const g = typeof window.getPitchBendSensitivityFromControllerChangesAtTick === 'function'
+            ? window.getPitchBendSensitivityFromControllerChangesAtTick(ch, tick, ccs)
+            : { semitones: null };
+        const semi = g && g.semitones != null && Number.isFinite(g.semitones) ? g.semitones : 2;
+        audioEngine.setPitchBendSensitivitySemitones(ch, semi);
+    }
+    const lastPB = new Map();
+    for (let i = 0; i < st.pbIndex; i++) {
+        lastPB.set(pbs[i].channel, pbs[i].value);
+    }
+    for (const [ch, val] of lastPB) {
+        audioEngine.pitchWheel(ch, val);
+    }
     if (typeof window.pulseProMidiOutAfterAutomationSeek === 'function') {
-        window.pulseProMidiOutAfterAutomationSeek(lastPB, lastCC);
+        window.pulseProMidiOutAfterAutomationSeek(lastPB, lastCC, tick);
     }
 }
 
@@ -598,22 +638,39 @@ function libraryPreviewLoop() {
     st.activeNotes = newActive;
 
     const pbs = st.pitchBends;
-    while (st.pbIndex < pbs.length && pbs[st.pbIndex].tick <= playbackTick) {
-        const e = pbs[st.pbIndex];
-        audioEngine.pitchWheel(e.channel, e.value);
-        if (typeof window.pulseProMidiOutPitchWheel === 'function') {
-            window.pulseProMidiOutPitchWheel(e.channel, e.value);
-        }
-        st.pbIndex++;
-    }
     const ccs = st.controllerChanges;
-    while (st.ccIndex < ccs.length && ccs[st.ccIndex].tick <= playbackTick) {
-        const e = ccs[st.ccIndex];
-        audioEngine.controllerChange(e.channel, e.controller, e.value);
-        if (typeof window.pulseProMidiOutControllerChange === 'function') {
-            window.pulseProMidiOutControllerChange(e.channel, e.controller, e.value);
+    const playT = playbackTick;
+    const PRI_P = 1;
+    const PRI_C = 2;
+    while (true) {
+        const candidates = [];
+        if (st.pbIndex < pbs.length && pbs[st.pbIndex].tick <= playT) {
+            candidates.push({ kind: 'p', tick: pbs[st.pbIndex].tick, pri: PRI_P });
         }
-        st.ccIndex++;
+        if (st.ccIndex < ccs.length && ccs[st.ccIndex].tick <= playT) {
+            candidates.push({ kind: 'c', tick: ccs[st.ccIndex].tick, pri: PRI_C });
+        }
+        if (candidates.length === 0) break;
+        candidates.sort(function(a, b) {
+            if (a.tick !== b.tick) return a.tick - b.tick;
+            return a.pri - b.pri;
+        });
+        const first = candidates[0].kind;
+        if (first === 'p') {
+            const e = pbs[st.pbIndex];
+            audioEngine.pitchWheel(e.channel, e.value);
+            if (typeof window.pulseProMidiOutPitchWheel === 'function') {
+                window.pulseProMidiOutPitchWheel(e.channel, e.value);
+            }
+            st.pbIndex++;
+        } else {
+            const e = ccs[st.ccIndex];
+            audioEngine.controllerChange(e.channel, e.controller, e.value);
+            if (typeof window.pulseProMidiOutControllerChange === 'function') {
+                window.pulseProMidiOutControllerChange(e.channel, e.controller, e.value);
+            }
+            st.ccIndex++;
+        }
     }
 
     scheduleNextLibraryPreviewLoop();
@@ -683,7 +740,8 @@ function startLibraryPreview(arrayBuffer, songId) {
         ccIndex: 0,
         endTick: endTick,
     };
-    seekLibraryPreviewAutomation(0, libraryPreviewCtx.pitchBends, libraryPreviewCtx.controllerChanges, libraryPreviewCtx);
+    seekLibraryPreviewAutomation(0, libraryPreviewCtx.pitchBends, libraryPreviewCtx.controllerChanges,
+        libraryPreviewCtx);
     scheduleNextLibraryPreviewLoop();
     if (window.pulseProRefreshSongLibraryIfVisible) window.pulseProRefreshSongLibraryIfVisible();
 }

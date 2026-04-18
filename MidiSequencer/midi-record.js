@@ -88,7 +88,14 @@ function canRecordOnDeviceMidiChannel(midiCh) {
 }
 
 function sortControllerChangesRecorded() {
-    state.controllerChanges.sort((a, b) => a.tick - b.tick || a.channel - b.channel || a.controller - b.controller);
+    if (typeof window.compareControllerChangesForPlayback === 'function') {
+        state.controllerChanges.sort(window.compareControllerChangesForPlayback);
+    } else {
+        state.controllerChanges.sort((a, b) => a.tick - b.tick || a.channel - b.channel || a.controller - b.controller);
+    }
+    if (typeof window.bumpPitchBendControllerMutationForSensCache === 'function') {
+        window.bumpPitchBendControllerMutationForSensCache();
+    }
 }
 
 function sortPitchBendsRecorded() {

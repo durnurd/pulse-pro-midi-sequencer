@@ -33,7 +33,9 @@ function getVerticalTimePanMaxPx() {
 
 function drawPitchBendRibbonSampleSteps(nwPx, nhPx, isVertical) {
     const len = isVertical ? Math.abs(nhPx || 0) : (nwPx || 0);
-    return Math.min(2048, Math.max(160, Math.ceil(Math.max(len, 12))));
+    // ~1 sample per 2px along the ribbon; cap to keep path building + sensitivity lookups cheap on long notes.
+    const byPx = Math.ceil(Math.max(len, 12) / 2);
+    return Math.min(288, Math.max(40, byPx));
 }
 
 function drawPitchBendHorizontalNoteRibbon(gridCtx, n, nx, nw, row, sy) {
@@ -323,7 +325,10 @@ function renderGridVertical() {
         for (let ch = 0; ch < 16; ch++) overlayEvents[ch] = [];
         if (state.automationOverlay === 'pitchBend') {
             for (const ev of state.pitchBends) {
-                overlayEvents[ev.channel].push({ tick: ev.tick, value: ev.value / 16383 });
+                const norm = typeof window.pitchBendDisplayNorm01 === 'function'
+                    ? window.pitchBendDisplayNorm01(ev.channel, ev.tick, ev.value)
+                    : ev.value / 16383;
+                overlayEvents[ev.channel].push({ tick: ev.tick, value: norm });
             }
         } else {
             const ccNum = state.automationOverlay;
@@ -609,7 +614,10 @@ function renderGrid() {
         for (let ch = 0; ch < 16; ch++) overlayEvents[ch] = [];
         if (state.automationOverlay === 'pitchBend') {
             for (const ev of state.pitchBends) {
-                overlayEvents[ev.channel].push({ tick: ev.tick, value: ev.value / 16383 }); // normalize to 0-1
+                const normH = typeof window.pitchBendDisplayNorm01 === 'function'
+                    ? window.pitchBendDisplayNorm01(ev.channel, ev.tick, ev.value)
+                    : ev.value / 16383;
+                overlayEvents[ev.channel].push({ tick: ev.tick, value: normH }); // normalize to 0-1
             }
         } else {
             const ccNum = state.automationOverlay;
@@ -1031,6 +1039,34 @@ function renderPlaybackHeaderVertical() {
             pbCtx.textBaseline = 'middle';
             pbCtx.fillText(e.numerator + '/' + e.denominator, 2, my);
         }
+        const pitchSensV = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+            ? window.getPitchBendSensitivityDisplayChanges() : [];
+        for (const e of pitchSensV) {
+            let drawTick = e.tick;
+            if (prev && prev.kind === 'pitchScale' && prev.origTick === e.tick
+                && typeof prev.semitones === 'number' && typeof e.semitones === 'number'
+                && Math.abs(prev.semitones - e.semitones) < 1e-5) {
+                drawTick = prev.previewTick;
+            }
+            if (drawTick < visLo || drawTick > visHi) continue;
+            const my = seamY - (drawTick - pb) * SNAP_WIDTH + pan;
+            if (my < -4 || my > h + 4) continue;
+            const stagger = ((e.channel | 0) % 8) - 3.5;
+            const yText = my + stagger * 1.2;
+            const xLine = half * 0.55 + w * 0.22;
+            pbCtx.strokeStyle = '#c86cff';
+            pbCtx.lineWidth = 2;
+            pbCtx.beginPath();
+            pbCtx.moveTo(xLine - 2, my);
+            pbCtx.lineTo(w - 1, my);
+            pbCtx.stroke();
+            pbCtx.fillStyle = '#c86cff';
+            pbCtx.font = '9px monospace';
+            pbCtx.textBaseline = 'middle';
+            const semi = typeof e.semitones === 'number' ? e.semitones : 2;
+            const lab = (Math.abs(semi - Math.round(semi)) < 1e-6) ? String(Math.round(semi)) : String(Number(semi.toFixed(3)));
+            pbCtx.fillText('±' + lab, Math.min(w - 36, xLine + 2), yText);
+        }
     }
 
     if (state.conductorPlacementMode && state.conductorPlacementHoverTick != null) {
@@ -1130,6 +1166,32 @@ function renderPlaybackHeader() {
             pbCtx.font = '9px monospace';
             pbCtx.textBaseline = 'alphabetic';
             pbCtx.fillText(e.numerator + '/' + e.denominator, mx + 2, 22);
+        }
+        const pitchSensH = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+            ? window.getPitchBendSensitivityDisplayChanges() : [];
+        for (const e of pitchSensH) {
+            let drawTick = e.tick;
+            if (prev && prev.kind === 'pitchScale' && prev.origTick === e.tick
+                && typeof prev.semitones === 'number' && typeof e.semitones === 'number'
+                && Math.abs(prev.semitones - e.semitones) < 1e-5) {
+                drawTick = prev.previewTick;
+            }
+            if (drawTick < visStartTk || drawTick > visEndTk) continue;
+            const mx = drawTick * SNAP_WIDTH - sx;
+            const stagger = ((e.channel | 0) % 8) - 3.5;
+            const ty = 14 + stagger;
+            pbCtx.strokeStyle = '#c86cff';
+            pbCtx.lineWidth = 2;
+            pbCtx.beginPath();
+            pbCtx.moveTo(mx, 8);
+            pbCtx.lineTo(mx, 20);
+            pbCtx.stroke();
+            pbCtx.fillStyle = '#c86cff';
+            pbCtx.font = '9px monospace';
+            pbCtx.textBaseline = 'alphabetic';
+            const semi = typeof e.semitones === 'number' ? e.semitones : 2;
+            const lab = (Math.abs(semi - Math.round(semi)) < 1e-6) ? String(Math.round(semi)) : String(Number(semi.toFixed(3)));
+            pbCtx.fillText('±' + lab, mx + 2, ty);
         }
     }
 

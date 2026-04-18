@@ -1,7 +1,63 @@
 // pitch-bend-note-tool.js — Piano-roll pitch bend on notes when pitch bend mode is on (Pointer/Pencil).
 
-/** Full pitch wheel (0–16383) maps to this many semitones up/down from center for edit + display. */
+/** Default ±semitones for full pitch wheel when no RPN sensitivity is loaded (typical GM). */
 const PB_EDIT_SEMITONE_RANGE = 2;
+
+/** @type {object|null} */
+let _pbSensTimelineCacheCcRef = null;
+/** @type {number} */
+let _pbSensTimelineCacheMut = -1;
+/** @type {{ ticks: number[], semis: number[] }[]|null} */
+let _pbSensTimelineByCh = null;
+
+/** @type {object|null} */
+let _pbMaxSensCacheCcRef = null;
+/** @type {number} */
+let _pbMaxSensCacheMut = -1;
+/** @type {number} */
+let _pbMaxSensCachedVal = PB_EDIT_SEMITONE_RANGE;
+
+/**
+ * Call after any in-place mutation of {@link state.controllerChanges} (sort, push, …) so pitch-bend
+ * rendering recomputes RPN 0,0 sensitivity timelines without replaying the full CC list per sample.
+ */
+function bumpPitchBendControllerMutationForSensCache() {
+    const cc = typeof state !== 'undefined' && state ? state.controllerChanges : null;
+    if (cc && Array.isArray(cc)) {
+        cc._pbMut = ((cc._pbMut | 0) + 1) >>> 0;
+    }
+}
+
+function ensurePitchBendSensitivitySemitoneTimelineCache() {
+    const cc = typeof state !== 'undefined' && state ? state.controllerChanges : null;
+    const mut = cc ? (cc._pbMut | 0) : 0;
+    if (cc === _pbSensTimelineCacheCcRef && mut === _pbSensTimelineCacheMut && _pbSensTimelineByCh) {
+        return;
+    }
+    _pbSensTimelineCacheCcRef = cc;
+    _pbSensTimelineCacheMut = mut;
+    _pbSensTimelineByCh = [];
+    for (let c = 0; c < 16; c++) {
+        _pbSensTimelineByCh.push({ ticks: [], semis: [] });
+    }
+    const raw = typeof window.computePitchBendSensitivityChanges === 'function'
+        ? window.computePitchBendSensitivityChanges(cc || [])
+        : [];
+    for (let i = 0; i < raw.length; i++) {
+        const e = raw[i];
+        const ch = e.channel | 0;
+        if (ch < 0 || ch > 15) continue;
+        const bucket = _pbSensTimelineByCh[ch];
+        const t = e.tick | 0;
+        const s = typeof e.semitones === 'number' ? e.semitones : PB_EDIT_SEMITONE_RANGE;
+        if (bucket.ticks.length > 0 && bucket.ticks[bucket.ticks.length - 1] === t) {
+            bucket.semis[bucket.semis.length - 1] = s;
+        } else {
+            bucket.ticks.push(t);
+            bucket.semis.push(s);
+        }
+    }
+}
 /** Horizontal width (px) of start/end hit targets at note edges. */
 const PITCH_BEND_HANDLE_PX = 10;
 /** Radius (px) of the center Bezier control handle hit target. */
@@ -47,31 +103,98 @@ function pitchBendCenterHandleAnchorTick(note) {
     return Math.min(t1 - 1, Math.max(t0, Math.round(t0 + u * (dur - 1))));
 }
 
-function semitonesFromValue14(v) {
-    return ((v | 0) - 8192) * PB_EDIT_SEMITONE_RANGE / 8192;
+/** Effective ±semitones for full wheel at tick on channel (RPN 0,0 + data entry in {@link state.controllerChanges} only). */
+function getPitchBendSensitivitySemitones(ch, tick) {
+    ensurePitchBendSensitivitySemitoneTimelineCache();
+    const t = tick | 0;
+    const c = ch | 0;
+    const bucket = _pbSensTimelineByCh[c];
+    if (!bucket || bucket.ticks.length === 0) {
+        return PB_EDIT_SEMITONE_RANGE;
+    }
+    const ticks = bucket.ticks;
+    const semis = bucket.semis;
+    let lo = 0;
+    let hi = ticks.length - 1;
+    let ans = PB_EDIT_SEMITONE_RANGE;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (ticks[mid] <= t) {
+            ans = semis[mid];
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return typeof ans === 'number' && Number.isFinite(ans) ? ans : PB_EDIT_SEMITONE_RANGE;
 }
 
-function value14FromSemitones(st) {
-    const x = 8192 + st * 8192 / PB_EDIT_SEMITONE_RANGE;
+/** Max ±semitones used for vertical layout (note ribbon + overlay scale). */
+function pitchBendMaxSensitivitySemitonesOnProject() {
+    const ccs = state.controllerChanges;
+    const mut = ccs ? (ccs._pbMut | 0) : 0;
+    if (ccs === _pbMaxSensCacheCcRef && mut === _pbMaxSensCacheMut) {
+        return _pbMaxSensCachedVal;
+    }
+    _pbMaxSensCacheCcRef = ccs;
+    _pbMaxSensCacheMut = mut;
+    let m = PB_EDIT_SEMITONE_RANGE;
+    if (ccs && ccs.length && typeof window.getMaxPitchSensitivitySemitonesFromControllerChanges === 'function') {
+        const mm = window.getMaxPitchSensitivitySemitonesFromControllerChanges(ccs);
+        if (typeof mm === 'number' && mm > m) m = mm;
+    }
+    _pbMaxSensCachedVal = m;
+    return m;
+}
+
+function semitonesFromValue14At(v, ch, tick) {
+    const r = getPitchBendSensitivitySemitones(ch, tick);
+    return ((v | 0) - 8192) * r / 8192;
+}
+
+function value14FromSemitonesAt(st, ch, tick) {
+    const r = getPitchBendSensitivitySemitones(ch, tick);
+    const x = 8192 + st * 8192 / r;
     return Math.max(0, Math.min(16383, Math.round(x)));
 }
 
-function snapValue14ToHalfStep(v) {
-    const st = semitonesFromValue14(v);
+function snapValue14ToHalfStepAt(v, ch, tick) {
+    const st = semitonesFromValue14At(v, ch, tick);
     const snapped = Math.round(st * 2) / 2;
-    return value14FromSemitones(snapped);
+    return value14FromSemitonesAt(snapped, ch, tick);
 }
 
 /** Snap 14-bit pitch wheel to whole semitone steps (edit UI default). */
-function snapValue14ToWholeStep(v) {
-    const st = semitonesFromValue14(v);
+function snapValue14ToWholeStepAt(v, ch, tick) {
+    const st = semitonesFromValue14At(v, ch, tick);
     const snapped = Math.round(st);
-    return value14FromSemitones(snapped);
+    return value14FromSemitonesAt(snapped, ch, tick);
 }
 
-function pitchBendVisualOffsetPxFromValue14(v) {
-    const st = semitonesFromValue14(v);
+function pitchBendVisualOffsetPxFromValue14At(v, ch, tick) {
+    const st = semitonesFromValue14At(v, ch, tick);
     return -st * NOTE_HEIGHT;
+}
+
+/**
+ * Normalized 0–1 for the pitch-bend automation strip only: linear 14-bit wheel (0 = bottom, 16383 = top).
+ * Bend sensitivity (RPN) does not change this scale — it only affects how the synth interprets the wheel.
+ * @param {number} _ch kept for call-site compatibility
+ * @param {number} _tick kept for call-site compatibility
+ */
+function pitchBendDisplayNorm01(_ch, _tick, value14) {
+    const v = Math.max(0, Math.min(16383, value14 | 0));
+    return v / 16383;
+}
+
+/**
+ * Inverse of {@link pitchBendDisplayNorm01} for writing automation from strip Y (linear 0…16383).
+ * @param {number} _ch kept for call-site compatibility
+ * @param {number} _tick kept for call-site compatibility
+ */
+function pitchBendNorm01ToValue14(_ch, _tick, norm01) {
+    const n = Math.max(0, Math.min(1, norm01));
+    return clampPitchBend14(Math.round(n * 16383));
 }
 
 function samplePitchBendValue14(ch, tick) {
@@ -95,12 +218,13 @@ function samplePitchBendValue14(ch, tick) {
 }
 
 function pitchBendVisualOffsetPxAtTick(ch, tick) {
-    return pitchBendVisualOffsetPxFromValue14(samplePitchBendValue14(ch, tick));
+    const v = samplePitchBendValue14(ch, tick);
+    return pitchBendVisualOffsetPxFromValue14At(v, ch, tick);
 }
 
 /** Max |vertical offset| (px) used when drawing / hit-testing pitch-bend overlay vs MIDI row. */
 function pitchBendMaxVisualOffsetPx() {
-    return PB_EDIT_SEMITONE_RANGE * NOTE_HEIGHT;
+    return pitchBendMaxSensitivitySemitonesOnProject() * NOTE_HEIGHT;
 }
 
 function sortPitchBendsInPlace() {
@@ -353,12 +477,12 @@ function clampPitchBend14(v) {
  */
 function rewritePitchBendRangeWithSpine(ch, t0, t1, vStart, vEnd, devByTick) {
     const span = Math.max(1, t1 - t0);
-    const va = snapValue14ToWholeStep(vStart | 0);
-    const vb = snapValue14ToWholeStep(vEnd | 0);
+    const tLastIn = t1 - 1;
+    const va = snapValue14ToWholeStepAt(vStart | 0, ch, t0);
+    const vb = snapValue14ToWholeStepAt(vEnd | 0, ch, Math.max(t0, tLastIn));
     removePitchBendsInRange(ch, t0, t1);
     const keysSorted = [...devByTick.keys()].filter(k => k >= t0 && k < t1).sort((a, b) => a - b);
     const sortedTicks = pitchBendDenseTickList(t0, t1);
-    const tLastIn = t1 - 1;
     for (const tk of sortedTicks) {
         let raw;
         if (tk === t0) {
@@ -432,8 +556,8 @@ function pitchBendQuadraticScalar(u, s0, s1, s2) {
  */
 function rewritePitchBendRangeQuadraticBezier(ch, t0, t1, va14, vb14, sc, uc, note, vPre14) {
     const span = Math.max(1, t1 - t0);
-    const s0 = semitonesFromValue14(va14 | 0);
-    const s2 = semitonesFromValue14(vb14 | 0);
+    const s0 = semitonesFromValue14At(va14 | 0, ch, t0);
+    const s2 = semitonesFromValue14At(vb14 | 0, ch, Math.max(t0, t1 - 1));
     removePitchBendsInRange(ch, t0, t1);
     const sortedTicks = pitchBendDenseTickList(t0, t1);
     const tLastIn = t1 - 1;
@@ -441,7 +565,7 @@ function rewritePitchBendRangeQuadraticBezier(ch, t0, t1, va14, vb14, sc, uc, no
         const w = span <= 1 ? 0 : (tk - t0) / span;
         const u = pitchBendSolveUFromLinearTime(w, uc);
         const s = pitchBendQuadraticScalar(u, s0, sc, s2);
-        let raw = clampPitchBend14(value14FromSemitones(s));
+        let raw = clampPitchBend14(value14FromSemitonesAt(s, ch, tk));
         if (tk === t0) raw = va14 | 0;
         else if (span > 1 && tk === tLastIn) raw = vb14 | 0;
         state.pitchBends.push({ tick: tk, channel: ch, value: raw });
@@ -460,7 +584,7 @@ function rewritePitchBendRangeQuadraticBezier(ch, t0, t1, va14, vb14, sc, uc, no
  */
 function applyFlatPitchBendForNotePlacement(ch, t0, t1, value14, vPre) {
     removePitchBendsInRange(ch, t0, t1);
-    const vSnapped = snapValue14ToWholeStep(value14 | 0);
+    const vSnapped = snapValue14ToWholeStepAt(value14 | 0, ch, t0);
     for (const tk of pitchBendDenseTickList(t0, t1)) {
         state.pitchBends.push({ tick: tk, channel: ch, value: clampPitchBend14(vSnapped) });
     }
@@ -492,7 +616,7 @@ function pitchBendSyncPlacementRamp(note, d) {
         }
     }
     const vStart = d.placeBendVPre | 0;
-    const vEnd = placementDyToSnappedValue14(d.placeBendAccDy || 0);
+    const vEnd = placementDyToSnappedValue14(d.placeBendAccDy || 0, note);
     rewritePitchBendRangeWithSpine(ch, t0, t1, vStart, vEnd, new Map());
     ensurePitchRestoreAfterNote(note, d.placeBendVPre | 0);
     if (d.placeBendLastPreviewValue14 != null && d.placeBendLastPreviewValue14 !== vEnd
@@ -503,7 +627,7 @@ function pitchBendSyncPlacementRamp(note, d) {
     }
     d.placeBendLastPreviewValue14 = vEnd;
     if (typeof audioEngine !== 'undefined' && audioEngine && typeof audioEngine.pitchWheel === 'function') {
-        audioEngine.pitchWheel(ch, clampPitchBend14(placementDyToSnappedValue14(d.placeBendAccDy || 0)));
+        audioEngine.pitchWheel(ch, clampPitchBend14(placementDyToSnappedValue14(d.placeBendAccDy || 0, note)));
     }
 }
 
@@ -511,10 +635,29 @@ function pitchBendSyncPlacementRamp(note, d) {
  * Map vertical pixel delta (grid space, positive = down) to whole-semitone-snapped bend value from center.
  * @param {number} dyPx
  */
-function placementDyToSnappedValue14(dyPx) {
+function placementDyToSnappedValue14(dyPx, note) {
+    const ch = note.channel | 0;
+    const tRef = note.startTick | 0;
     const st = -dyPx / NOTE_HEIGHT;
     const snapped = Math.round(st);
-    return value14FromSemitones(snapped);
+    return value14FromSemitonesAt(snapped, ch, tRef);
+}
+
+/** Legacy API: channel 0, tick 0 sensitivity (default ±2 unless first change is at tick 0). */
+function semitonesFromValue14(v) {
+    return semitonesFromValue14At(v, 0, 0);
+}
+function value14FromSemitones(st) {
+    return value14FromSemitonesAt(st, 0, 0);
+}
+function snapValue14ToHalfStep(v) {
+    return snapValue14ToHalfStepAt(v, 0, 0);
+}
+function snapValue14ToWholeStep(v) {
+    return snapValue14ToWholeStepAt(v, 0, 0);
+}
+function pitchBendVisualOffsetPxFromValue14(v) {
+    return pitchBendVisualOffsetPxFromValue14At(v, 0, 0);
 }
 
 window.isPitchBendNoteToolActive = isPitchBendNoteToolActive;
@@ -523,6 +666,15 @@ window.pitchBendCenterHandleTimeFractionForNote = pitchBendCenterHandleTimeFract
 window.pitchBendCenterHandleAnchorTick = pitchBendCenterHandleAnchorTick;
 window.PITCH_BEND_HANDLE_PX = PITCH_BEND_HANDLE_PX;
 window.PITCH_BEND_CENTER_HANDLE_R = PITCH_BEND_CENTER_HANDLE_R;
+window.getPitchBendSensitivitySemitones = getPitchBendSensitivitySemitones;
+window.pitchBendDisplayNorm01 = pitchBendDisplayNorm01;
+window.pitchBendNorm01ToValue14 = pitchBendNorm01ToValue14;
+window.bumpPitchBendControllerMutationForSensCache = bumpPitchBendControllerMutationForSensCache;
+window.semitonesFromValue14At = semitonesFromValue14At;
+window.value14FromSemitonesAt = value14FromSemitonesAt;
+window.snapValue14ToHalfStepAt = snapValue14ToHalfStepAt;
+window.snapValue14ToWholeStepAt = snapValue14ToWholeStepAt;
+window.pitchBendVisualOffsetPxFromValue14At = pitchBendVisualOffsetPxFromValue14At;
 window.semitonesFromValue14 = semitonesFromValue14;
 window.value14FromSemitones = value14FromSemitones;
 window.snapValue14ToHalfStep = snapValue14ToHalfStep;
@@ -550,13 +702,13 @@ function pitchBendBuildCenterDragState(note, gx, gy) {
     const vPre = samplePitchBendValue14BeforeTick(ch, t0);
     const v0 = samplePitchBendValue14(ch, t0) | 0;
     const v2 = samplePitchBendValue14(ch, Math.max(t0, t1 - 1)) | 0;
-    const va = snapValue14ToWholeStep(v0);
-    const vb = snapValue14ToWholeStep(v2);
-    const s0 = semitonesFromValue14(va);
-    const s2 = semitonesFromValue14(vb);
+    const va = snapValue14ToWholeStepAt(v0, ch, t0);
+    const vb = snapValue14ToWholeStepAt(v2, ch, Math.max(t0, t1 - 1));
+    const s0 = semitonesFromValue14At(va, ch, t0);
+    const s2 = semitonesFromValue14At(vb, ch, Math.max(t0, t1 - 1));
     const dur = Math.max(1, t1 - t0);
     const midTick = Math.min(t1 - 1, Math.max(t0, t0 + Math.floor(dur / 2)));
-    const sMid = semitonesFromValue14(samplePitchBendValue14(ch, midTick));
+    const sMid = semitonesFromValue14At(samplePitchBendValue14(ch, midTick), ch, midTick);
     const scInit = 2 * sMid - 0.5 * (s0 + s2);
     return {
         pbNote: note,
@@ -589,7 +741,7 @@ function pitchBendApplyCenterHandleDrag(d, gx, gy) {
         const w = span <= 1 ? 0 : (midT - d.pbT0) / span;
         const u = pitchBendSolveUFromLinearTime(w, d.pbUc);
         const s = pitchBendQuadraticScalar(u, d.pbS0, d.pbSc, d.pbS2);
-        audioEngine.pitchWheel(ch, clampPitchBend14(value14FromSemitones(s)));
+        audioEngine.pitchWheel(ch, clampPitchBend14(value14FromSemitonesAt(s, ch, midT)));
     }
 }
 
@@ -601,8 +753,8 @@ function pitchBendBuildHandleDragState(note, handle, gy) {
     const vEnd0 = samplePitchBendValue14(ch, Math.max(t0, t1 - 1));
     const dev = pitchBendSpineDeviations(ch, t0, t1, vStart0, vEnd0);
     const vPre = samplePitchBendValue14BeforeTick(ch, t0);
-    const v0eff = snapValue14ToWholeStep(vStart0 | 0);
-    const v1eff = snapValue14ToWholeStep(vEnd0 | 0);
+    const v0eff = snapValue14ToWholeStepAt(vStart0 | 0, ch, t0);
+    const v1eff = snapValue14ToWholeStepAt(vEnd0 | 0, ch, Math.max(t0, t1 - 1));
     return {
         pbNote: note,
         pbHandle: handle,
@@ -622,15 +774,16 @@ function pitchBendApplyHandleDragFromMouseGy(d, gy) {
     const dSem = -(gy - d.startMouseGy) / NOTE_HEIGHT;
     let vEff;
     if (d.pbHandle === 'left') {
-        const st = Math.round(semitonesFromValue14(d.pbVStart0) + dSem);
-        const vStartNew = value14FromSemitones(st);
+        const st = Math.round(semitonesFromValue14At(d.pbVStart0, ch, d.pbT0) + dSem);
+        const vStartNew = value14FromSemitonesAt(st, ch, d.pbT0);
         rewritePitchBendRangeWithSpine(ch, d.pbT0, d.pbT1, vStartNew, d.pbVEnd0, d.pbDevByTick);
-        vEff = snapValue14ToWholeStep(vStartNew | 0);
+        vEff = snapValue14ToWholeStepAt(vStartNew | 0, ch, d.pbT0);
     } else {
-        const st = Math.round(semitonesFromValue14(d.pbVEnd0) + dSem);
-        const vEndNew = value14FromSemitones(st);
+        const tEnd = Math.max(d.pbT0, d.pbT1 - 1);
+        const st = Math.round(semitonesFromValue14At(d.pbVEnd0, ch, tEnd) + dSem);
+        const vEndNew = value14FromSemitonesAt(st, ch, tEnd);
         rewritePitchBendRangeWithSpine(ch, d.pbT0, d.pbT1, d.pbVStart0, vEndNew, d.pbDevByTick);
-        vEff = snapValue14ToWholeStep(vEndNew | 0);
+        vEff = snapValue14ToWholeStepAt(vEndNew | 0, ch, tEnd);
     }
     ensurePitchRestoreAfterNote(d.pbNote, d.pbVPre);
     if (typeof d.pbLastPreviewValue14 === 'number' && d.pbLastPreviewValue14 !== vEff

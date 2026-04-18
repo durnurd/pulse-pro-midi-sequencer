@@ -8,6 +8,9 @@ const BEAT_WIDTH_DEFAULT = 48;
 const BEAT_WIDTH_MIN = 6;
 const BEAT_WIDTH_MAX = 480;
 const MIDI_TPQN = 480; // raw MIDI ticks per quarter note
+/** RPN 0,0 pitch bend sensitivity (±semitones at full wheel); matches MIDI import limits. */
+const PITCH_BEND_SENSITIVITY_SEMITONES_MIN = 0.01;
+const PITCH_BEND_SENSITIVITY_SEMITONES_MAX = 96;
 /** Note/automation snap interval in ticks; 1 when snap is off (see setSnapGridPower). */
 let TICKS_PER_SNAP = Math.round(MIDI_TPQN / 4); // default 16th note
 const SNAP_GRID_POWER_MIN = 0;

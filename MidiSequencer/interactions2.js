@@ -3,7 +3,7 @@
 const kc = document.getElementById('keyboard-canvas');
 const pb = document.getElementById('playback-canvas');
 let pbDrag = false, kcDragging = false, kcLastNote = -1;
-/** @type {null | { kind: string, origTick: number, bpm?: number, numerator?: number, denominator?: number, startClientX: number, moved: boolean }} */
+/** @type {null | { kind: string, origTick: number, bpm?: number, numerator?: number, denominator?: number, semitones?: number, hitChannel?: number, startClientX: number, startClientY: number, moved: boolean }} */
 let conductorPbDrag = null;
 function noteFromY(gy) { return TOTAL_MIDI_NOTES - 1 - Math.floor(gy / NOTE_HEIGHT); }
 function noteFromKeyboardStripLocalX(lx) {
@@ -165,8 +165,15 @@ pb.addEventListener('mousedown', function(e) {
                 pushUndoState('delete conductor marker');
                 if (hit.kind === 'bpm') {
                     state.tempoChanges = state.tempoChanges.filter(function(ev) { return ev.tick !== hit.tick; });
-                } else {
+                } else if (hit.kind === 'ts') {
                     state.timeSigChanges = state.timeSigChanges.filter(function(ev) { return ev.tick !== hit.tick; });
+                } else if (hit.kind === 'pitchScale' && hit.channel != null && hit.tick != null) {
+                    if (typeof window.removePitchBendSensitivityRpnBundleFromState === 'function') {
+                        window.removePitchBendSensitivityRpnBundleFromState(hit.channel | 0, hit.tick | 0);
+                    }
+                    if (typeof window.pulseProSeekAutomationToPlayhead === 'function') {
+                        window.pulseProSeekAutomationToPlayhead();
+                    }
                 }
                 if (window.updateChannelListUI) window.updateChannelListUI();
                 if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
@@ -202,28 +209,65 @@ pb.addEventListener('mousedown', function(e) {
     if (!state.conductor.locked && conductorTrackVisible()) {
         const hit = pickConductorMarkerAtPlaybackHeader(localX, localY);
         if (hit) {
-            const ev = hit.kind === 'bpm'
-                ? state.tempoChanges.find(function(x) { return x.tick === hit.tick; })
-                : state.timeSigChanges.find(function(x) { return x.tick === hit.tick; });
-            if (ev) {
-                e.preventDefault();
-                conductorPbDrag = {
-                    kind: hit.kind,
-                    origTick: hit.tick,
-                    bpm: hit.kind === 'bpm' ? ev.bpm : undefined,
-                    numerator: hit.kind === 'ts' ? ev.numerator : undefined,
-                    denominator: hit.kind === 'ts' ? ev.denominator : undefined,
-                    startClientX: e.clientX,
-                    startClientY: e.clientY,
-                    moved: false,
-                };
-                state.conductorMarkerDragPreview = {
-                    kind: hit.kind,
-                    origTick: hit.tick,
-                    previewTick: hit.tick,
-                };
-                renderAll();
-                return;
+            if (hit.kind === 'bpm') {
+                const ev = state.tempoChanges.find(function(x) { return x.tick === hit.tick; });
+                if (ev) {
+                    e.preventDefault();
+                    conductorPbDrag = {
+                        kind: 'bpm',
+                        origTick: hit.tick,
+                        bpm: ev.bpm,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        moved: false,
+                    };
+                    state.conductorMarkerDragPreview = { kind: 'bpm', origTick: hit.tick, previewTick: hit.tick };
+                    renderAll();
+                    return;
+                }
+            } else if (hit.kind === 'ts') {
+                const ev = state.timeSigChanges.find(function(x) { return x.tick === hit.tick; });
+                if (ev) {
+                    e.preventDefault();
+                    conductorPbDrag = {
+                        kind: 'ts',
+                        origTick: hit.tick,
+                        numerator: ev.numerator,
+                        denominator: ev.denominator,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        moved: false,
+                    };
+                    state.conductorMarkerDragPreview = { kind: 'ts', origTick: hit.tick, previewTick: hit.tick };
+                    renderAll();
+                    return;
+                }
+            } else if (hit.kind === 'pitchScale' && hit.channel != null) {
+                const commits = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+                    ? window.getPitchBendSensitivityDisplayChanges() : [];
+                const ev = commits.find(function(x) {
+                    return x.tick === hit.tick && (x.channel | 0) === (hit.channel | 0);
+                });
+                if (ev) {
+                    e.preventDefault();
+                    conductorPbDrag = {
+                        kind: 'pitchScale',
+                        origTick: hit.tick,
+                        semitones: ev.semitones,
+                        hitChannel: hit.channel | 0,
+                        startClientX: e.clientX,
+                        startClientY: e.clientY,
+                        moved: false,
+                    };
+                    state.conductorMarkerDragPreview = {
+                        kind: 'pitchScale',
+                        origTick: hit.tick,
+                        previewTick: hit.tick,
+                        semitones: ev.semitones,
+                    };
+                    renderAll();
+                    return;
+                }
             }
         }
     }
@@ -253,11 +297,16 @@ document.addEventListener('mousemove', function(e) {
             const gx = e.clientX - r.left + getPlaybackHeaderScrollPx();
             nt = Math.max(1, snapTick(gx));
         }
-        state.conductorMarkerDragPreview = {
+        const prevBase = {
             kind: conductorPbDrag.kind,
             origTick: conductorPbDrag.origTick,
             previewTick: nt,
         };
+        if (conductorPbDrag.kind === 'pitchScale' && conductorPbDrag.semitones != null) {
+            state.conductorMarkerDragPreview = Object.assign({}, prevBase, { semitones: conductorPbDrag.semitones });
+        } else {
+            state.conductorMarkerDragPreview = prevBase;
+        }
         renderAll();
         return;
     }
@@ -280,7 +329,7 @@ document.addEventListener('mouseup', function(e) {
                 state.tempoChanges = state.tempoChanges.filter(function(ev) { return ev.tick !== preview.previewTick; });
                 state.tempoChanges.push({ tick: preview.previewTick, bpm: d.bpm });
                 sortTempoChanges();
-            } else {
+            } else if (d.kind === 'ts') {
                 state.timeSigChanges = state.timeSigChanges.filter(function(ev) { return ev.tick !== d.origTick; });
                 state.timeSigChanges = state.timeSigChanges.filter(function(ev) { return ev.tick !== preview.previewTick; });
                 state.timeSigChanges.push({
@@ -289,13 +338,46 @@ document.addEventListener('mouseup', function(e) {
                     denominator: d.denominator,
                 });
                 sortTimeSigChanges();
+            } else if (d.kind === 'pitchScale' && d.semitones != null
+                && typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+                && typeof window.applyPitchBendSensitivityRpnAtTick === 'function'
+                && typeof window.removePitchBendSensitivityRpnBundleFromState === 'function') {
+                const semi = d.semitones;
+                const nt = preview.previewTick | 0;
+                const origT = d.origTick | 0;
+                const commits = window.getPitchBendSensitivityDisplayChanges();
+                const chans = new Set();
+                for (let i = 0; i < commits.length; i++) {
+                    const ev = commits[i];
+                    if (ev.tick === origT && Math.abs(ev.semitones - semi) < 1e-5) {
+                        chans.add(ev.channel | 0);
+                    }
+                }
+                if (chans.size > 0) {
+                    for (const ch of chans) {
+                        window.removePitchBendSensitivityRpnBundleFromState(ch, origT);
+                    }
+                    for (const ch of chans) {
+                        window.removePitchBendSensitivityRpnBundleFromState(ch, nt);
+                    }
+                    for (const ch of chans) {
+                        window.applyPitchBendSensitivityRpnAtTick(ch, nt, semi);
+                    }
+                    if (typeof window.pulseProSeekAutomationToPlayhead === 'function') {
+                        window.pulseProSeekAutomationToPlayhead();
+                    }
+                }
             }
             if (window.updateChannelListUI) window.updateChannelListUI();
             if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
                 window.reanchorPlaybackClockIfPlaying();
             }
         } else if (!d.moved && typeof window.openConductorMarkerEdit === 'function') {
-            window.openConductorMarkerEdit(d.kind, d.origTick);
+            if (d.kind === 'pitchScale' && d.hitChannel != null) {
+                window.openConductorMarkerEdit('pitchScale', d.origTick, d.hitChannel);
+            } else {
+                window.openConductorMarkerEdit(d.kind, d.origTick);
+            }
         }
         renderAll();
         return;

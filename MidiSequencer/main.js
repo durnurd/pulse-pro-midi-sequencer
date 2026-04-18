@@ -302,18 +302,28 @@
         btnClear.type = 'button';
         btnClear.className = 'ch-conductor-btn';
         btnClear.textContent = 'Clear all';
-        btnClear.title = 'Remove all tempo and time signature changes';
+        btnClear.title = 'Remove all tempo, time signature, and pitch bend range markers';
         btnClear.addEventListener('click', function() {
             if (state.conductor.locked) return;
             if (!conductorTrackVisible()) return;
-            if (!confirm('Remove all conductor tempo and time signature changes?')) return;
+            if (!confirm('Remove all conductor tempo, time signature, and pitch bend range changes?')) return;
             pushUndoState('clear conductor changes');
             state.tempoChanges = [];
             state.timeSigChanges = [];
+            if (typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+                && typeof window.removePitchBendSensitivityRpnBundleFromState === 'function') {
+                const marks = window.getPitchBendSensitivityDisplayChanges();
+                for (let i = 0; i < marks.length; i++) {
+                    window.removePitchBendSensitivityRpnBundleFromState(marks[i].channel | 0, marks[i].tick | 0);
+                }
+            }
             if (typeof window.cancelConductorInsertUi === 'function') window.cancelConductorInsertUi();
             if (window.updateChannelListUI) window.updateChannelListUI();
             if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
                 window.reanchorPlaybackClockIfPlaying();
+            }
+            if (typeof window.pulseProSeekAutomationToPlayhead === 'function') {
+                window.pulseProSeekAutomationToPlayhead();
             }
             renderAll();
         });
@@ -935,6 +945,9 @@
         syncGridSnapUi();
         // Rebuild track list
         buildTrackListRows();
+        if (!state.isPlaying && typeof window.pulseProSeekAutomationToPlayhead === 'function') {
+            window.pulseProSeekAutomationToPlayhead();
+        }
     };
 
     function applyInstrumentsFromTrackState() {
@@ -961,6 +974,9 @@
         applyInstrumentsFromTrackState();
         if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
             window.reanchorPlaybackClockIfPlaying();
+        }
+        if (!state.isPlaying && typeof window.pulseProSeekAutomationToPlayhead === 'function') {
+            window.pulseProSeekAutomationToPlayhead();
         }
     };
 
@@ -1402,14 +1418,21 @@
     const conductorInsertBpm = document.getElementById('conductor-insert-bpm');
     const conductorInsertTsNum = document.getElementById('conductor-insert-ts-num');
     const conductorInsertTsDen = document.getElementById('conductor-insert-ts-den');
+    const conductorInsertPitchSem = document.getElementById('conductor-insert-pitch-sem');
+    const conductorInsertPitchScopeWrap = document.getElementById('conductor-insert-pitch-scope-wrap');
     const conductorInsertOk = document.getElementById('conductor-insert-ok');
     const conductorInsertCancel = document.getElementById('conductor-insert-cancel');
+    /** null = inserting pitch range; number = editing that channel's marker at conductorPendingTick */
+    let conductorPendingPitchEditChannel = null;
 
-    function setConductorDialogFieldMode(isBpm) {
+    /** @param {'bpm' | 'timesig' | 'pitchScale'} mode */
+    function setConductorDialogFieldMode(mode) {
         const bpmW = document.getElementById('conductor-insert-bpm-wrap');
         const tsW = document.getElementById('conductor-insert-ts-wrap');
-        if (bpmW) bpmW.classList.toggle('hidden', !isBpm);
-        if (tsW) tsW.classList.toggle('hidden', isBpm);
+        const pitchW = document.getElementById('conductor-insert-pitch-wrap');
+        if (bpmW) bpmW.classList.toggle('hidden', mode !== 'bpm');
+        if (tsW) tsW.classList.toggle('hidden', mode !== 'timesig');
+        if (pitchW) pitchW.classList.toggle('hidden', mode !== 'pitchScale');
     }
 
     function hideConductorValueDialog() {
@@ -1436,14 +1459,23 @@
             requestAnimationFrame(function() {
                 conductorInsertTsNum.focus();
             });
+        } else if (conductorPendingKind === 'pitchScale' && conductorInsertPitchSem) {
+            requestAnimationFrame(function() {
+                conductorInsertPitchSem.focus();
+                conductorInsertPitchSem.select();
+            });
         }
     }
 
     function cancelConductorInsertUi() {
         conductorPendingKind = null;
         conductorPendingTick = null;
+        conductorPendingPitchEditChannel = null;
         hideConductorValueDialog();
         if (conductorInsertBpm) conductorInsertBpm.value = '';
+        if (conductorInsertPitchSem) conductorInsertPitchSem.value = '';
+        const scopeTrack = document.getElementById('conductor-insert-pitch-scope-track');
+        if (scopeTrack) scopeTrack.checked = true;
         state.conductorPlacementMode = null;
         state.conductorPlacementHoverTick = null;
         renderAll();
@@ -1455,6 +1487,7 @@
         closeAllDropdowns();
         hideConductorValueDialog();
         if (conductorInsertBpm) conductorInsertBpm.value = '';
+        conductorPendingPitchEditChannel = null;
         conductorPendingKind = kind;
         conductorPendingTick = null;
         state.conductorPlacementMode = kind;
@@ -1468,19 +1501,35 @@
         conductorPendingTick = tick;
         state.conductorPlacementMode = null;
         state.conductorPlacementHoverTick = null;
-        if (!conductorValueDialog || !conductorInsertBpm || !conductorInsertTsNum || !conductorInsertTsDen) return;
+        if (!conductorValueDialog) return;
+        if (conductorPendingKind === 'bpm' && !conductorInsertBpm) return;
+        if (conductorPendingKind === 'timesig' && (!conductorInsertTsNum || !conductorInsertTsDen)) return;
+        if (conductorPendingKind === 'pitchScale' && !conductorInsertPitchSem) return;
+        conductorPendingPitchEditChannel = null;
         if (conductorPendingKind === 'bpm') {
-            setConductorDialogFieldMode(true);
+            setConductorDialogFieldMode('bpm');
             if (conductorDialogHeading) conductorDialogHeading.textContent = 'Insert BPM change';
             if (conductorDialogSub) conductorDialogSub.textContent = 'Position: tick ' + tick;
             conductorInsertBpm.value = String(Math.round(getEffectiveBpmAtTick(tick)));
-        } else {
-            setConductorDialogFieldMode(false);
+        } else if (conductorPendingKind === 'timesig') {
+            setConductorDialogFieldMode('timesig');
             if (conductorDialogHeading) conductorDialogHeading.textContent = 'Insert time signature change';
             if (conductorDialogSub) conductorDialogSub.textContent = 'Position: tick ' + tick;
             const sig = getEffectiveTimeSigAtTick(tick);
             conductorInsertTsNum.value = String(sig.numerator);
             conductorInsertTsDen.value = String(sig.denominator);
+        } else if (conductorPendingKind === 'pitchScale') {
+            setConductorDialogFieldMode('pitchScale');
+            if (conductorDialogHeading) conductorDialogHeading.textContent = 'Insert pitch bend range';
+            if (conductorDialogSub) conductorDialogSub.textContent = 'Position: tick ' + tick;
+            if (conductorInsertPitchScopeWrap) conductorInsertPitchScopeWrap.classList.remove('hidden');
+            const trk = state.tracks[state.activeTrack];
+            const ch = trk ? (trk.channel | 0) % 16 : 0;
+            let cur = 2;
+            if (typeof window.getPitchBendSensitivitySemitones === 'function') {
+                cur = window.getPitchBendSensitivitySemitones(ch, tick);
+            }
+            if (conductorInsertPitchSem) conductorInsertPitchSem.value = String(Number(cur.toFixed(4)));
         }
         showConductorValueDialog();
         focusConductorDialogPrimary();
@@ -1489,31 +1538,60 @@
 
     /**
      * Open the value modal to edit an existing conductor marker (playback header).
-     * @param {'bpm'|'ts'} kind
+     * @param {'bpm'|'ts'|'pitchScale'} kind
      * @param {number} tick
+     * @param {number} [optChannel] MIDI channel (0–15) for pitch bend range markers
      */
-    window.openConductorMarkerEdit = function(kind, tick) {
+    window.openConductorMarkerEdit = function(kind, tick, optChannel) {
         if (state.conductor.locked) return;
-        conductorPendingKind = kind === 'bpm' ? 'bpm' : 'timesig';
+        conductorPendingPitchEditChannel = null;
+        if (kind === 'pitchScale') {
+            conductorPendingKind = 'pitchScale';
+            const ch = optChannel != null ? (optChannel | 0) % 16 : 0;
+            const commits = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+                ? window.getPitchBendSensitivityDisplayChanges() : [];
+            const ev = commits.find(function(e) { return e.tick === tick && (e.channel | 0) === ch; });
+            if (!ev) return;
+            conductorPendingPitchEditChannel = ch;
+        } else {
+            conductorPendingKind = kind === 'bpm' ? 'bpm' : 'timesig';
+        }
         conductorPendingTick = tick;
         state.conductorPlacementMode = null;
         state.conductorPlacementHoverTick = null;
-        if (!conductorValueDialog || !conductorInsertBpm || !conductorInsertTsNum || !conductorInsertTsDen) return;
+        if (!conductorValueDialog) return;
+        if (conductorPendingKind === 'bpm' && !conductorInsertBpm) return;
+        if (conductorPendingKind === 'timesig' && (!conductorInsertTsNum || !conductorInsertTsDen)) return;
+        if (conductorPendingKind === 'pitchScale' && !conductorInsertPitchSem) return;
         if (conductorPendingKind === 'bpm') {
             const ev = state.tempoChanges.find(function(e) { return e.tick === tick; });
             if (!ev) return;
-            setConductorDialogFieldMode(true);
+            setConductorDialogFieldMode('bpm');
             if (conductorDialogHeading) conductorDialogHeading.textContent = 'Edit BPM change';
             if (conductorDialogSub) conductorDialogSub.textContent = 'Tick ' + tick;
             conductorInsertBpm.value = String(ev.bpm);
-        } else {
+        } else if (conductorPendingKind === 'timesig') {
             const ev = state.timeSigChanges.find(function(e) { return e.tick === tick; });
             if (!ev) return;
-            setConductorDialogFieldMode(false);
+            setConductorDialogFieldMode('timesig');
             if (conductorDialogHeading) conductorDialogHeading.textContent = 'Edit time signature change';
             if (conductorDialogSub) conductorDialogSub.textContent = 'Tick ' + tick;
             conductorInsertTsNum.value = String(ev.numerator);
             conductorInsertTsDen.value = String(ev.denominator);
+        } else {
+            const commits2 = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+                ? window.getPitchBendSensitivityDisplayChanges() : [];
+            const ev = commits2.find(function(e) {
+                return e.tick === tick && (e.channel | 0) === (conductorPendingPitchEditChannel | 0);
+            });
+            if (!ev) return;
+            setConductorDialogFieldMode('pitchScale');
+            if (conductorDialogHeading) conductorDialogHeading.textContent = 'Edit pitch bend range';
+            if (conductorDialogSub) {
+                conductorDialogSub.textContent = 'Tick ' + tick + ', MIDI channel ' + ((conductorPendingPitchEditChannel | 0) + 1);
+            }
+            if (conductorInsertPitchScopeWrap) conductorInsertPitchScopeWrap.classList.add('hidden');
+            if (conductorInsertPitchSem) conductorInsertPitchSem.value = String(Number(ev.semitones.toFixed(4)));
         }
         showConductorValueDialog();
         focusConductorDialogPrimary();
@@ -1540,7 +1618,7 @@
                 state.tempoChanges.push({ tick: t, bpm: bpm });
                 sortTempoChanges();
             }
-        } else {
+        } else if (conductorPendingKind === 'timesig') {
             if (!conductorInsertTsNum || !conductorInsertTsDen) return;
             const n = parseInt(conductorInsertTsNum.value, 10);
             const d = parseInt(conductorInsertTsDen.value, 10);
@@ -1563,9 +1641,42 @@
                 state.timeSigChanges.push({ tick: t, numerator: n, denominator: d });
                 sortTimeSigChanges();
             }
+        } else if (conductorPendingKind === 'pitchScale') {
+            clampConductorInsertPitchSemField();
+            if (!conductorInsertPitchSem) return;
+            let semi = parseFloat(String(conductorInsertPitchSem.value).replace(',', '.'));
+            if (!Number.isFinite(semi)) {
+                alert('Enter a valid number of semitones (e.g. 2 for the usual ±2 range).');
+                return;
+            }
+            semi = Math.max(PITCH_BEND_SENSITIVITY_SEMITONES_MIN, Math.min(PITCH_BEND_SENSITIVITY_SEMITONES_MAX, semi));
+            const t = Math.max(0, conductorPendingTick);
+            if (typeof window.applyPitchBendSensitivityRpnAtTick !== 'function') return;
+            if (conductorPendingPitchEditChannel != null) {
+                pushUndoState('edit pitch bend range');
+                const ch = conductorPendingPitchEditChannel | 0;
+                window.applyPitchBendSensitivityRpnAtTick(ch, t, semi);
+            } else {
+                pushUndoState('insert pitch bend range');
+                const scopeEl = document.querySelector('input[name="conductor-insert-pitch-scope"]:checked');
+                const scopeAll = scopeEl && scopeEl.value === 'all';
+                const trk = state.tracks[state.activeTrack];
+                const activeCh = trk ? (trk.channel | 0) % 16 : 0;
+                if (scopeAll) {
+                    for (let ch = 0; ch < 16; ch++) {
+                        window.applyPitchBendSensitivityRpnAtTick(ch, t, semi);
+                    }
+                } else {
+                    window.applyPitchBendSensitivityRpnAtTick(activeCh, t, semi);
+                }
+            }
+            if (typeof window.pulseProSeekAutomationToPlayhead === 'function') {
+                window.pulseProSeekAutomationToPlayhead();
+            }
         }
         conductorPendingKind = null;
         conductorPendingTick = null;
+        conductorPendingPitchEditChannel = null;
         hideConductorValueDialog();
         if (typeof window.reanchorPlaybackClockIfPlaying === 'function') {
             window.reanchorPlaybackClockIfPlaying();
@@ -1586,8 +1697,10 @@
 
     const btnInsertBpm = document.getElementById('btn-insert-bpm');
     const btnInsertTimesig = document.getElementById('btn-insert-timesig');
+    const btnInsertPitchScale = document.getElementById('btn-insert-pitch-scale');
     if (btnInsertBpm) btnInsertBpm.addEventListener('click', function() { beginConductorInsert('bpm'); });
     if (btnInsertTimesig) btnInsertTimesig.addEventListener('click', function() { beginConductorInsert('timesig'); });
+    if (btnInsertPitchScale) btnInsertPitchScale.addEventListener('click', function() { beginConductorInsert('pitchScale'); });
     if (conductorInsertOk) conductorInsertOk.addEventListener('click', function() { commitConductorInsertFromInput(); });
     if (conductorInsertCancel) conductorInsertCancel.addEventListener('click', cancelConductorInsertUi);
     if (conductorValueDialog) {
@@ -1598,6 +1711,18 @@
     if (conductorInsertBpm) conductorInsertBpm.addEventListener('keydown', conductorDialogKeydown);
     if (conductorInsertTsNum) conductorInsertTsNum.addEventListener('keydown', conductorDialogKeydown);
     if (conductorInsertTsDen) conductorInsertTsDen.addEventListener('keydown', conductorDialogKeydown);
+    function clampConductorInsertPitchSemField() {
+        if (!conductorInsertPitchSem) return;
+        let v = parseFloat(String(conductorInsertPitchSem.value).replace(',', '.'));
+        if (!Number.isFinite(v)) return;
+        v = Math.max(PITCH_BEND_SENSITIVITY_SEMITONES_MIN, Math.min(PITCH_BEND_SENSITIVITY_SEMITONES_MAX, v));
+        conductorInsertPitchSem.value = String(Number(v.toFixed(4)));
+    }
+    if (conductorInsertPitchSem) {
+        conductorInsertPitchSem.addEventListener('input', clampConductorInsertPitchSemField);
+        conductorInsertPitchSem.addEventListener('blur', clampConductorInsertPitchSemField);
+        conductorInsertPitchSem.addEventListener('keydown', conductorDialogKeydown);
+    }
 
     // Edit menu actions
     document.getElementById('btn-edit-undo').addEventListener('click', function() {

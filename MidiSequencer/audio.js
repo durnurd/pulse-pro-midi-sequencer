@@ -1,4 +1,24 @@
 // audio.js - SoundFont-based audio engine using SpessaSynth
+
+/** Registered parameter 0,0: pitch bend sensitivity in semitones (MIDI data entry coarse + fine/128). */
+function semitonesToPitchBendRangeDataEntry(semitones) {
+    const lo = typeof PITCH_BEND_SENSITIVITY_SEMITONES_MIN === 'number' ? PITCH_BEND_SENSITIVITY_SEMITONES_MIN : 0.01;
+    const hi = typeof PITCH_BEND_SENSITIVITY_SEMITONES_MAX === 'number' ? PITCH_BEND_SENSITIVITY_SEMITONES_MAX : 96;
+    let s = Number(semitones);
+    if (!Number.isFinite(s)) s = 2;
+    s = Math.max(lo, Math.min(hi, s));
+    let coarse = Math.floor(s);
+    let fine = Math.round((s - coarse) * 128);
+    if (fine >= 128) {
+        coarse += 1;
+        fine -= 128;
+    }
+    if (fine < 0) fine = 0;
+    coarse = Math.max(0, Math.min(127, coarse));
+    fine = Math.max(0, Math.min(127, fine));
+    return { coarse, fine };
+}
+
 class AudioEngine {
     constructor() {
         this.ctx = null;
@@ -179,6 +199,23 @@ class AudioEngine {
     controllerChange(channel, controller, value) {
         if (!this.synth || !this.ready) return;
         this.synth.controllerChange(channel, controller, value);
+    }
+
+    /**
+     * Set pitch wheel range (±semitones at full deflection) via RPN 0,0 and data entry.
+     * @param {number} channel 0–15
+     * @param {number} semitones positive range in semitones (e.g. 2 for ±2)
+     */
+    setPitchBendSensitivitySemitones(channel, semitones) {
+        if (!this.synth || !this.ready) return;
+        const ch = channel & 0x0f;
+        const { coarse, fine } = semitonesToPitchBendRangeDataEntry(semitones);
+        this.synth.controllerChange(ch, 101, 0);
+        this.synth.controllerChange(ch, 100, 0);
+        this.synth.controllerChange(ch, 6, coarse);
+        this.synth.controllerChange(ch, 38, fine);
+        this.synth.controllerChange(ch, 101, 127);
+        this.synth.controllerChange(ch, 100, 127);
     }
 
     resetAllControllers() {

@@ -60,11 +60,11 @@ const state = {
     conductor: {
         locked: false,
     },
-    /** null | 'bpm' | 'timesig' — Insert menu placement mode */
+    /** null | 'bpm' | 'timesig' | 'pitchScale' — Insert menu placement mode */
     conductorPlacementMode: null,
     /** Live preview tick during placement (grid + header); null if unknown */
     conductorPlacementHoverTick: null,
-    /** While dragging a conductor marker on the playback header: { kind, origTick, previewTick } */
+    /** While dragging a conductor marker on the playback header: { kind, origTick, previewTick, semitones? } */
     conductorMarkerDragPreview: null,
 
     // Grid snap: 0 = quarter … 5 = 128th; -1 = none (see setSnapGridPower)
@@ -422,6 +422,21 @@ function _restoreSnapshot(json) {
     state.notes = snap.notes || [];
     state.pitchBends = snap.pitchBends || [];
     state.controllerChanges = snap.controllerChanges || [];
+    if (Array.isArray(snap.pitchBendSensitivityChanges) && snap.pitchBendSensitivityChanges.length > 0
+        && typeof window.applyPitchBendSensitivityRpnAtTick === 'function') {
+        for (let i = 0; i < snap.pitchBendSensitivityChanges.length; i++) {
+            const e = snap.pitchBendSensitivityChanges[i];
+            const ch = e.channel | 0;
+            const tk = e.tick | 0;
+            const semi = Number(e.semitones);
+            if (Number.isFinite(semi)) {
+                window.applyPitchBendSensitivityRpnAtTick(ch, tk, semi);
+            }
+        }
+    }
+    if (typeof window.sortStateControllerChanges === 'function') {
+        window.sortStateControllerChanges();
+    }
     if (snap.tracks) state.tracks = snap.tracks;
     if (typeof snap.bpm === 'number') state.bpm = snap.bpm;
     if (typeof snap.timeSigNumerator === 'number') state.timeSigNumerator = snap.timeSigNumerator;
@@ -633,7 +648,11 @@ async function pasteNotes() {
 
 // --- Conductor / effective tempo & time signature ---
 function conductorTrackVisible() {
-    return state.tempoChanges.length + state.timeSigChanges.length > 0;
+    if (state.tempoChanges.length + state.timeSigChanges.length > 0) return true;
+    if (typeof window.getPitchBendSensitivityDisplayChanges === 'function') {
+        return window.getPitchBendSensitivityDisplayChanges().length > 0;
+    }
+    return false;
 }
 
 function getEffectiveBpmAtTick(tick) {
@@ -762,14 +781,14 @@ function tickFromWallSeconds(wallSec) {
 }
 
 /**
- * Hit test conductor markers on the playback header (uses Y to separate BPM vs TS when both share a tick).
+ * Hit test conductor markers on the playback header (uses Y / strip thirds to separate BPM, pitch range, TS).
  * @param {number} localX X within the playback header canvas (horizontal mode: add scroll via caller)
  * @param {number} localY Y within the playback header canvas (0 = top)
- * @returns {{ kind: 'bpm' | 'ts', tick: number } | null}
+ * @returns {{ kind: 'bpm' | 'ts' | 'pitchScale', tick: number, channel?: number, semitones?: number } | null}
  */
 function pickConductorMarkerAtPlaybackHeader(localX, localY) {
     if (!conductorTrackVisible()) return null;
-    const thresholdPx = 8;
+    const thresholdPx = 9;
     let best = null;
     let bestPri = Infinity;
     if (state.verticalPianoRoll) {
@@ -777,13 +796,14 @@ function pickConductorMarkerAtPlaybackHeader(localX, localY) {
         const seamY = h - 1;
         const pan = state.verticalTimePanPx;
         const pb = state.playbackTick;
-        const half = VERTICAL_PLAYBACK_STRIP_WIDTH / 2;
+        const wStrip = VERTICAL_PLAYBACK_STRIP_WIDTH;
+        const xThird = wStrip / 3;
         for (const e of state.tempoChanges) {
             const yMark = seamY - (e.tick - pb) * SNAP_WIDTH + pan;
             const d = Math.abs(yMark - localY);
             if (d > thresholdPx) continue;
-            let pri = d;
-            if (localX >= half) pri += 5;
+            const ax = wStrip * 5 / 6;
+            const pri = d + Math.abs(localX - ax) * 0.15;
             if (pri < bestPri) {
                 bestPri = pri;
                 best = { kind: 'bpm', tick: e.tick };
@@ -793,34 +813,62 @@ function pickConductorMarkerAtPlaybackHeader(localX, localY) {
             const yMark = seamY - (e.tick - pb) * SNAP_WIDTH + pan;
             const d = Math.abs(yMark - localY);
             if (d > thresholdPx) continue;
-            let pri = d;
-            if (localX < half) pri += 5;
+            const ax = wStrip / 6;
+            const pri = d + Math.abs(localX - ax) * 0.15;
             if (pri < bestPri) {
                 bestPri = pri;
                 best = { kind: 'ts', tick: e.tick };
+            }
+        }
+        const pitchSensMarks = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+            ? window.getPitchBendSensitivityDisplayChanges() : [];
+        for (const e of pitchSensMarks) {
+            const yMark = seamY - (e.tick - pb) * SNAP_WIDTH + pan;
+            const stagger = ((e.channel | 0) % 8) - 3.5;
+            const yHit = yMark + stagger * 1.5;
+            const d = Math.abs(yHit - localY);
+            if (d > thresholdPx) continue;
+            const ax = xThird * 1.5;
+            const pri = d + Math.abs(localX - ax) * 0.12;
+            if (pri < bestPri) {
+                bestPri = pri;
+                best = { kind: 'pitchScale', tick: e.tick, channel: e.channel | 0, semitones: e.semitones };
             }
         }
         return best;
     }
     const gx = localX + getPlaybackHeaderScrollPx();
     for (const e of state.tempoChanges) {
-        const d = Math.abs(e.tick * SNAP_WIDTH - gx);
+        const mx = e.tick * SNAP_WIDTH;
+        const d = Math.abs(mx - gx);
         if (d > thresholdPx) continue;
-        let pri = d;
-        if (localY >= 11) pri += 5;
+        const pri = d + Math.abs(localY - 6) * 0.35;
         if (pri < bestPri) {
             bestPri = pri;
             best = { kind: 'bpm', tick: e.tick };
         }
     }
     for (const e of state.timeSigChanges) {
-        const d = Math.abs(e.tick * SNAP_WIDTH - gx);
+        const mx = e.tick * SNAP_WIDTH;
+        const d = Math.abs(mx - gx);
         if (d > thresholdPx) continue;
-        let pri = d;
-        if (localY < 11) pri += 5;
+        const pri = d + Math.abs(localY - 21) * 0.35;
         if (pri < bestPri) {
             bestPri = pri;
             best = { kind: 'ts', tick: e.tick };
+        }
+    }
+    const pitchSensMarksH = typeof window.getPitchBendSensitivityDisplayChanges === 'function'
+        ? window.getPitchBendSensitivityDisplayChanges() : [];
+    for (const e of pitchSensMarksH) {
+        const mx = e.tick * SNAP_WIDTH;
+        const d = Math.abs(mx - gx);
+        if (d > thresholdPx) continue;
+        const stagger = ((e.channel | 0) % 8) - 3.5;
+        const pri = d + Math.abs(localY - (14 + stagger)) * 0.35;
+        if (pri < bestPri) {
+            bestPri = pri;
+            best = { kind: 'pitchScale', tick: e.tick, channel: e.channel | 0, semitones: e.semitones };
         }
     }
     return best;

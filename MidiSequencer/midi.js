@@ -138,6 +138,13 @@ function exportMidi() {
         evts.sort((a, b) => {
             if (a.t !== b.t) return a.t - b.t;
             if (a.k !== b.k) return a.k - b.k;
+            const isCCa = (a.d[0] & 0xf0) === 0xb0;
+            const isCCb = (b.d[0] & 0xf0) === 0xb0;
+            if (isCCa && isCCb) {
+                const pa = controllerChangeSameTickSortPri(a.d[1], a.d[2]);
+                const pb = controllerChangeSameTickSortPri(b.d[1], b.d[2]);
+                if (pa !== pb) return pa - pb;
+            }
             const ba = a.d[1] != null ? a.d[1] : 0;
             const bb = b.d[1] != null ? b.d[1] : 0;
             return ba - bb;
@@ -297,6 +304,259 @@ function initMidiDragDrop(element) {
     });
 }
 
+const _PB_SENS_DEFAULT = 2;
+const _PB_SENS_MIN = typeof PITCH_BEND_SENSITIVITY_SEMITONES_MIN === 'number' ? PITCH_BEND_SENSITIVITY_SEMITONES_MIN : 0.01;
+const _PB_SENS_MAX = typeof PITCH_BEND_SENSITIVITY_SEMITONES_MAX === 'number' ? PITCH_BEND_SENSITIVITY_SEMITONES_MAX : 96;
+
+/**
+ * Sort key for control changes at the same tick/channel so RPN select (101/100) precedes data entry (6/38)
+ * and null-RPN close (101=127,100=127) follows, matching hardware expectations.
+ */
+function controllerChangeSameTickSortPri(controller, value) {
+    const c = controller | 0;
+    const v = value | 0;
+    if (c === 101) return v === 127 ? 50 : 0;
+    if (c === 100) return v === 127 ? 51 : 1;
+    if (c === 6) return 2;
+    if (c === 38) return 3;
+    return 100 + c;
+}
+
+/** Stable order for {@link state.controllerChanges} and import replay. */
+function compareControllerChangesForPlayback(a, b) {
+    const dt = (a.tick | 0) - (b.tick | 0);
+    if (dt !== 0) return dt;
+    const dc = (a.channel | 0) - (b.channel | 0);
+    if (dc !== 0) return dc;
+    const pa = controllerChangeSameTickSortPri(a.controller | 0, a.value | 0);
+    const pb = controllerChangeSameTickSortPri(b.controller | 0, b.value | 0);
+    if (pa !== pb) return pa - pb;
+    const sa = a._seq !== undefined ? a._seq : 0;
+    const sb = b._seq !== undefined ? b._seq : 0;
+    if (sa !== sb) return sa - sb;
+    return (a.controller | 0) - (b.controller | 0);
+}
+
+function sortStateControllerChanges() {
+    if (typeof state === 'undefined' || !state || !Array.isArray(state.controllerChanges)) return;
+    state.controllerChanges.sort(compareControllerChangesForPlayback);
+    if (typeof window.bumpPitchBendControllerMutationForSensCache === 'function') {
+        window.bumpPitchBendControllerMutationForSensCache();
+    }
+}
+
+function encodePitchBendSensitivitySemitonesToCoarseFine(semitones) {
+    let s = Number(semitones);
+    if (!Number.isFinite(s)) s = _PB_SENS_DEFAULT;
+    s = _clampPitchSensitivitySemi(s);
+    let coarse = Math.floor(s);
+    let fine = Math.round((s - coarse) * 128);
+    if (fine >= 128) {
+        coarse += 1;
+        fine -= 128;
+    }
+    if (fine < 0) fine = 0;
+    coarse = Math.max(0, Math.min(127, coarse));
+    fine = Math.max(0, Math.min(127, fine));
+    return { coarse: coarse, fine: fine };
+}
+
+/**
+ * RPN 0,0 pitch-bend sensitivity as raw CC events (select + data entry + null RPN), one timeline tick.
+ * @returns {{ tick: number, channel: number, controller: number, value: number }[]}
+ */
+function buildPitchBendSensitivityRpnControllerEvents(channel, tick, semitones) {
+    const ch = channel | 0;
+    const t = tick | 0;
+    const cf = encodePitchBendSensitivitySemitonesToCoarseFine(semitones);
+    return [
+        { tick: t, channel: ch, controller: 101, value: 0 },
+        { tick: t, channel: ch, controller: 100, value: 0 },
+        { tick: t, channel: ch, controller: 6, value: cf.coarse },
+        { tick: t, channel: ch, controller: 38, value: cf.fine },
+        { tick: t, channel: ch, controller: 101, value: 127 },
+        { tick: t, channel: ch, controller: 100, value: 127 },
+    ];
+}
+
+function stripPitchBendRpnControllersAtTickForChannel(list, channel, tick) {
+    const ch = channel | 0;
+    const t = tick | 0;
+    return list.filter(function(ev) {
+        if ((ev.tick | 0) !== t || (ev.channel | 0) !== ch) return true;
+        const c = ev.controller | 0;
+        return !(c === 101 || c === 100 || c === 6 || c === 38);
+    });
+}
+
+/** Replace any RPN 6/38/101/100 at (tick, channel) with a full sensitivity RPN sequence in {@link state.controllerChanges}. */
+function applyPitchBendSensitivityRpnAtTick(channel, tick, semitones) {
+    if (typeof state === 'undefined' || !state) return;
+    const ch = channel | 0;
+    const t = tick | 0;
+    const base = stripPitchBendRpnControllersAtTickForChannel(state.controllerChanges || [], ch, t);
+    state.controllerChanges = base.concat(buildPitchBendSensitivityRpnControllerEvents(ch, t, semitones));
+    sortStateControllerChanges();
+}
+
+function removePitchBendSensitivityRpnBundleFromState(channel, tick) {
+    if (typeof state === 'undefined' || !state) return;
+    const ch = channel | 0;
+    const t = tick | 0;
+    state.controllerChanges = stripPitchBendRpnControllersAtTickForChannel(state.controllerChanges || [], ch, t);
+    sortStateControllerChanges();
+}
+
+/** Last winning semitone per (tick, channel) for conductor / header UI (avoids duplicate commits from 6+38 same tick). */
+function getPitchBendSensitivityDisplayChanges() {
+    const raw = computePitchBendSensitivityChanges(state.controllerChanges || []);
+    const byKey = new Map();
+    for (let i = 0; i < raw.length; i++) {
+        const e = raw[i];
+        const k = (e.tick | 0) + ',' + (e.channel | 0);
+        byKey.set(k, e);
+    }
+    return Array.from(byKey.values()).sort(function(a, b) {
+        return a.tick - b.tick || (a.channel | 0) - (b.channel | 0);
+    });
+}
+
+function _clampPitchSensitivitySemi(s) {
+    if (!Number.isFinite(s)) return _PB_SENS_DEFAULT;
+    return Math.max(_PB_SENS_MIN, Math.min(_PB_SENS_MAX, s));
+}
+
+/** Mutable FSM for RPN 0,0 pitch bend range from a CC stream (MIDI Registered Parameter). */
+function createPitchBendSensitivityFsmFromCcStream() {
+    return {
+        rpnHi: new Array(16).fill(127),
+        rpnLo: new Array(16).fill(127),
+        dataCoarse: new Array(16).fill(0),
+        lastSent: new Array(16).fill(NaN),
+        currentSemi: new Array(16).fill(null),
+        lastChangeTick: new Array(16).fill(-1),
+        maxSemiEver: _PB_SENS_DEFAULT,
+    };
+}
+
+/**
+ * Apply one controller change to pitch-bend sensitivity FSM.
+ * @returns {{ changed: boolean, channel: number, semitones: number }} changed when a new sensitivity value is committed for that channel
+ */
+function applyControllerEventForPitchSensitivityFsm(fsm, ev) {
+    const ch = ev.channel | 0;
+    const cc = ev.controller | 0;
+    const v = ev.value | 0;
+    if (cc === 101) {
+        fsm.rpnHi[ch] = v;
+        fsm.dataCoarse[ch] = 0;
+        return { changed: false, channel: ch, semitones: _PB_SENS_DEFAULT };
+    }
+    if (cc === 100) {
+        fsm.rpnLo[ch] = v;
+        fsm.dataCoarse[ch] = 0;
+        return { changed: false, channel: ch, semitones: _PB_SENS_DEFAULT };
+    }
+    if (fsm.rpnHi[ch] !== 0 || fsm.rpnLo[ch] !== 0) {
+        return { changed: false, channel: ch, semitones: _PB_SENS_DEFAULT };
+    }
+    let semi = NaN;
+    if (cc === 6) {
+        fsm.dataCoarse[ch] = v;
+        semi = _clampPitchSensitivitySemi(v);
+    } else if (cc === 38) {
+        semi = _clampPitchSensitivitySemi(fsm.dataCoarse[ch] + v / 128);
+    } else {
+        return { changed: false, channel: ch, semitones: _PB_SENS_DEFAULT };
+    }
+    if (semi === fsm.lastSent[ch]) {
+        return { changed: false, channel: ch, semitones: semi };
+    }
+    fsm.lastSent[ch] = semi;
+    fsm.currentSemi[ch] = semi;
+    fsm.lastChangeTick[ch] = ev.tick | 0;
+    if (semi > fsm.maxSemiEver) fsm.maxSemiEver = semi;
+    return { changed: true, channel: ch, semitones: semi };
+}
+
+/**
+ * Replay sorted controller changes up to tick (inclusive) and return FSM snapshot.
+ * @param {{ tick: number, channel: number, controller: number, value: number }[]} sortedCCs
+ * @param {number} tickLimit
+ */
+function replayPitchBendSensitivityFsmFromControllerChanges(sortedCCs, tickLimit) {
+    const fsm = createPitchBendSensitivityFsmFromCcStream();
+    const lim = typeof tickLimit === 'number' && Number.isFinite(tickLimit)
+        ? Math.floor(tickLimit)
+        : 0x7fffffff;
+    const ccs = sortedCCs || [];
+    for (let i = 0; i < ccs.length; i++) {
+        const ev = ccs[i];
+        if (ev.tick > lim) break;
+        applyControllerEventForPitchSensitivityFsm(fsm, ev);
+    }
+    return fsm;
+}
+
+/**
+ * Effective ±semitones from raw CC RPN 0,0 + data entry.
+ * @param {number} channel 0–15
+ * @param {number} tick
+ * @param {{ tick: number, channel: number, controller: number, value: number }[]} [optSortedCcs] optional list (e.g. library preview); defaults to {@link state.controllerChanges}
+ * @returns {{ semitones: number|null, lastTick: number }}
+ */
+function getPitchBendSensitivityFromControllerChangesAtTick(channel, tick, optSortedCcs) {
+    const ch = channel | 0;
+    const ccs = optSortedCcs != null
+        ? optSortedCcs
+        : (typeof state !== 'undefined' && state && state.controllerChanges ? state.controllerChanges : []);
+    const fsm = replayPitchBendSensitivityFsmFromControllerChanges(ccs, tick);
+    const semi = fsm.currentSemi[ch];
+    const t = fsm.lastChangeTick[ch];
+    if (semi != null && Number.isFinite(semi)) {
+        return { semitones: semi, lastTick: t >= 0 ? t : -1 };
+    }
+    return { semitones: null, lastTick: -1 };
+}
+
+/**
+ * Max ±semitones seen anywhere in the controller CC stream (for layout when markers are empty).
+ * @param {{ tick: number, channel: number, controller: number, value: number }[]} sortedCCs
+ */
+function getMaxPitchSensitivitySemitonesFromControllerChanges(sortedCCs) {
+    const fsm = replayPitchBendSensitivityFsmFromControllerChanges(sortedCCs, 0x7fffffff);
+    return fsm.maxSemiEver;
+}
+
+window.getPitchBendSensitivityFromControllerChangesAtTick = getPitchBendSensitivityFromControllerChangesAtTick;
+window.getMaxPitchSensitivitySemitonesFromControllerChanges = getMaxPitchSensitivitySemitonesFromControllerChanges;
+window.sortStateControllerChanges = sortStateControllerChanges;
+window.applyPitchBendSensitivityRpnAtTick = applyPitchBendSensitivityRpnAtTick;
+window.removePitchBendSensitivityRpnBundleFromState = removePitchBendSensitivityRpnBundleFromState;
+window.getPitchBendSensitivityDisplayChanges = getPitchBendSensitivityDisplayChanges;
+window.compareControllerChangesForPlayback = compareControllerChangesForPlayback;
+
+/**
+ * Build pitch-bend sensitivity (± semitones) events from RPN 0,0 + Data Entry (CC6/CC38) on sorted controller list.
+ * @param {{ tick: number, channel: number, controller: number, value: number }[]} sortedCCs
+ * @returns {{ tick: number, channel: number, semitones: number }[]}
+ */
+function computePitchBendSensitivityChanges(sortedCCs) {
+    const changes = [];
+    const fsm = createPitchBendSensitivityFsmFromCcStream();
+    for (let i = 0; i < sortedCCs.length; i++) {
+        const ev = sortedCCs[i];
+        const r = applyControllerEventForPitchSensitivityFsm(fsm, ev);
+        if (r.changed) {
+            changes.push({ tick: ev.tick | 0, channel: r.channel, semitones: r.semitones });
+        }
+    }
+    changes.sort(function(a, b) { return a.tick - b.tick || a.channel - b.channel; });
+    return changes;
+}
+
+window.computePitchBendSensitivityChanges = computePitchBendSensitivityChanges;
+
 function importMidi(buf) {
     const d = new Uint8Array(buf);
     if (String.fromCharCode(d[0], d[1], d[2], d[3]) !== 'MThd') throw new Error('Not a valid MIDI file');
@@ -307,6 +567,7 @@ function importMidi(buf) {
     const tsEvents = [];
     const notes = [];
     const pitchBends = [], controllerChanges = [];
+    let ccImportSeq = 0;
     // Build tracks array: one per SMF track chunk (skip empty conductor tracks later)
     const importedTracks = []; // {name, channel, instrument}
     let off = 8 + hLen;
@@ -377,7 +638,13 @@ function importMidi(buf) {
                 closeNoteFromStack(k, at, nt, ch);
             } else if (tp === 0xB0) {
                 const cc = d[off++], cv = d[off++];
-                controllerChanges.push({ tick: Math.round(at * sc), channel: ch, controller: cc, value: cv });
+                controllerChanges.push({
+                    tick: Math.round(at * sc),
+                    channel: ch,
+                    controller: cc,
+                    value: cv,
+                    _seq: ccImportSeq++,
+                });
             } else if (tp === 0xE0) {
                 const lsb = d[off++], msb = d[off++];
                 const val = (msb << 7) | lsb;
@@ -444,7 +711,12 @@ function importMidi(buf) {
     const cm = mergeConductorMetaFromImport(tempoEvents, tsEvents);
     // Sort automation events by tick for efficient playback scanning
     pitchBends.sort((a, b) => a.tick - b.tick);
-    controllerChanges.sort((a, b) => a.tick - b.tick);
+    controllerChanges.sort(compareControllerChangesForPlayback);
+    for (let i = 0; i < controllerChanges.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(controllerChanges[i], '_seq')) {
+            delete controllerChanges[i]._seq;
+        }
+    }
     return {
         notes,
         bpm: cm.bpm,

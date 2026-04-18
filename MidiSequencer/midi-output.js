@@ -103,6 +103,45 @@ function pulseProMidiOutControllerChange(channel, controller, value) {
     sendBytes([0xb0 | ch, controller & 0x7f, val]);
 }
 
+/** RPN 0,0 pitch bend range (±semitones); mirrors audioEngine.setPitchBendSensitivitySemitones. */
+function pulseProMidiOutSetPitchBendSensitivitySemitones(channel, semitones) {
+    if (!pulseProMidiOutIsActive()) return;
+    const ch = channel & 0x0f;
+    const lo = typeof PITCH_BEND_SENSITIVITY_SEMITONES_MIN === 'number' ? PITCH_BEND_SENSITIVITY_SEMITONES_MIN : 0.01;
+    const hi = typeof PITCH_BEND_SENSITIVITY_SEMITONES_MAX === 'number' ? PITCH_BEND_SENSITIVITY_SEMITONES_MAX : 96;
+    let s = Number(semitones);
+    if (!Number.isFinite(s)) s = 2;
+    s = Math.max(lo, Math.min(hi, s));
+    let coarse = Math.floor(s);
+    let fine = Math.round((s - coarse) * 128);
+    if (fine >= 128) {
+        coarse += 1;
+        fine -= 128;
+    }
+    if (fine < 0) fine = 0;
+    coarse = Math.max(0, Math.min(127, coarse));
+    fine = Math.max(0, Math.min(127, fine));
+    pulseProMidiOutControllerChange(ch, 101, 0);
+    pulseProMidiOutControllerChange(ch, 100, 0);
+    pulseProMidiOutControllerChange(ch, 6, coarse);
+    pulseProMidiOutControllerChange(ch, 38, fine);
+    pulseProMidiOutControllerChange(ch, 101, 127);
+    pulseProMidiOutControllerChange(ch, 100, 127);
+}
+
+/** Uses {@link window.getPitchBendSensitivitySemitones} (CC-derived) when available. */
+function pulseProMidiOutApplyPitchBendSensitivityForAllChannels(tick) {
+    if (!pulseProMidiOutIsActive()) return;
+    const t = tick | 0;
+    for (let ch = 0; ch < 16; ch++) {
+        let semi = 2;
+        if (typeof window.getPitchBendSensitivitySemitones === 'function') {
+            semi = window.getPitchBendSensitivitySemitones(ch, t);
+        }
+        pulseProMidiOutSetPitchBendSensitivitySemitones(ch, semi);
+    }
+}
+
 function pulseProMidiOutProgramChange(channel, program) {
     if (!pulseProMidiOutIsActive()) return;
     const ch = channel & 0x0f;
@@ -144,19 +183,22 @@ function pulseProMidiOutFullSilence() {
 }
 
 /**
- * After audio seekAutomationTo: reset hardware, then apply last pitch/CC maps from the timeline.
+ * After audio seekAutomationTo: reset hardware, then apply last CCs, pitch range from CC RPN 0,0, then pitch wheel.
  * @param {Map<number, number>} lastPB channel → 14-bit bend
  * @param {Map<string, {channel:number, controller:number, value:number}>} lastCC
+ * @param {number} [seekTick] timeline tick used for pitch bend sensitivity (defaults to playhead)
  */
-function pulseProMidiOutAfterAutomationSeek(lastPB, lastCC) {
+function pulseProMidiOutAfterAutomationSeek(lastPB, lastCC, seekTick) {
     if (!pulseProMidiOutIsActive()) return;
+    const t = typeof seekTick === 'number' ? seekTick : (typeof state !== 'undefined' && state ? state.playbackTick | 0 : 0);
     pulseProMidiOutAllNotesOff();
     pulseProMidiOutResetControllersOnly();
-    for (const [ch, val] of lastPB) {
-        pulseProMidiOutPitchWheel(ch, val);
-    }
     for (const info of lastCC.values()) {
         pulseProMidiOutControllerChange(info.channel, info.controller, info.value);
+    }
+    pulseProMidiOutApplyPitchBendSensitivityForAllChannels(t);
+    for (const [ch, val] of lastPB) {
+        pulseProMidiOutPitchWheel(ch, val);
     }
 }
 
@@ -230,6 +272,8 @@ window.pulseProMidiOutProgramChange = pulseProMidiOutProgramChange;
 window.pulseProMidiOutAllNotesOff = pulseProMidiOutAllNotesOff;
 window.pulseProMidiOutFullSilence = pulseProMidiOutFullSilence;
 window.pulseProMidiOutAfterAutomationSeek = pulseProMidiOutAfterAutomationSeek;
+window.pulseProMidiOutSetPitchBendSensitivitySemitones = pulseProMidiOutSetPitchBendSensitivitySemitones;
+window.pulseProMidiOutApplyPitchBendSensitivityForAllChannels = pulseProMidiOutApplyPitchBendSensitivityForAllChannels;
 window.pulseProMidiOutSendProgramsFromAudioEngine = pulseProMidiOutSendProgramsFromAudioEngine;
 window.pulseProMidiOutSendProgramsFromArray = pulseProMidiOutSendProgramsFromArray;
 window.pulseProRefreshMidiOutputSelect = pulseProRefreshMidiOutputSelect;

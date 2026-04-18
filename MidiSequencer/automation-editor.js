@@ -275,7 +275,12 @@ function aeGetEvents() {
         return state.pitchBends
             .filter(e => e.channel === ch)
             .sort((a, b) => a.tick - b.tick)
-            .map(e => ({ tick: e.tick, value: e.value / 16383 }));
+            .map(function(e) {
+                const norm = typeof window.pitchBendDisplayNorm01 === 'function'
+                    ? window.pitchBendDisplayNorm01(e.channel, e.tick, e.value)
+                    : e.value / 16383;
+                return { tick: e.tick, value: norm };
+            });
     } else {
         return state.controllerChanges
             .filter(e => e.channel === ch && e.controller === info.cc)
@@ -288,7 +293,11 @@ function aeGetEvents() {
 function aeDefaultNorm() {
     const info = aeType();
     if (!info) return 0.5;
-    if (info.kind === 'pb') return info.def / 16383;
+    if (info.kind === 'pb') {
+        return typeof window.pitchBendDisplayNorm01 === 'function'
+            ? window.pitchBendDisplayNorm01(state.activeChannel, 0, info.def)
+            : info.def / 16383;
+    }
     return info.def / 127;
 }
 
@@ -385,10 +394,14 @@ function aeWriteEvents(points) {
             !(e.channel === ch && e.tick >= minTick && e.tick <= maxTick)
         );
         for (const p of points) {
+            const tickR = Math.round(p.tick);
+            const val14 = typeof window.pitchBendNorm01ToValue14 === 'function'
+                ? window.pitchBendNorm01ToValue14(ch, tickR, p.normValue)
+                : Math.round(p.normValue * 16383);
             state.pitchBends.push({
-                tick: Math.round(p.tick),
+                tick: tickR,
                 channel: ch,
-                value: Math.round(p.normValue * 16383)
+                value: val14,
             });
         }
         state.pitchBends.sort((a, b) => a.tick - b.tick || a.channel - b.channel);
@@ -404,7 +417,11 @@ function aeWriteEvents(points) {
                 value: Math.round(p.normValue * 127)
             });
         }
-        state.controllerChanges.sort((a, b) => a.tick - b.tick);
+        if (typeof window.compareControllerChangesForPlayback === 'function') {
+            state.controllerChanges.sort(window.compareControllerChangesForPlayback);
+        } else {
+            state.controllerChanges.sort((a, b) => a.tick - b.tick);
+        }
     }
 }
 
@@ -886,10 +903,16 @@ function aeMousePos(e) {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
 
-function aeFormatValue(normVal) {
+function aeFormatValue(normVal, tickHint) {
     const info = aeType();
     if (!info) return '';
-    if (info.kind === 'pb') return Math.round(normVal * 16383).toString();
+    if (info.kind === 'pb') {
+        const t = tickHint != null ? tickHint : state.playbackTick;
+        if (typeof window.pitchBendNorm01ToValue14 === 'function') {
+            return String(window.pitchBendNorm01ToValue14(state.activeChannel, t, normVal));
+        }
+        return String(Math.round(normVal * 16383));
+    }
     return Math.round(normVal * 127).toString();
 }
 
@@ -1030,11 +1053,11 @@ aeCanvas.addEventListener('mousemove', function(e) {
         aeValueDisplay.textContent = 'cycles ' + aeWaveCycles.toFixed(2) + ' / max ' + maxC + '  amp ' + (aeWaveAmp * 100).toFixed(0) + '% — click to place';
     } else if (aeIsWaveTool() && aeWaveStage === 1) {
         aeWaveMouseEnd = { tick: tick, value: val };
-        aeValueDisplay.textContent = aeFormatValue(val) + ' — second click end';
+        aeValueDisplay.textContent = aeFormatValue(val, tick) + ' — second click end';
     } else if (aeIsWaveTool() && aeWaveStage === 0) {
-        aeValueDisplay.textContent = aeFormatValue(val) + ' — first click start';
+        aeValueDisplay.textContent = aeFormatValue(val, tick) + ' — first click start';
     } else {
-        aeValueDisplay.textContent = aeFormatValue(val);
+        aeValueDisplay.textContent = aeFormatValue(val, tick);
     }
 
     if (aeTool === 'line' && aeLineStart) {

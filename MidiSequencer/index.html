@@ -115,6 +115,7 @@
                     <div class="dropdown-content" id="insert-dropdown">
                         <button type="button" id="btn-insert-bpm">New BPM…</button>
                         <button type="button" id="btn-insert-timesig">New Time Signature…</button>
+                        <button type="button" id="btn-insert-pitch-scale">New Pitch Bend Range…</button>
                     </div>
                 </div>
             </div>
@@ -325,6 +326,16 @@
             <div class="conductor-dialog-field conductor-insert-bpm-wrap" id="conductor-insert-bpm-wrap">
                 <label id="conductor-insert-bpm-label" for="conductor-insert-bpm" class="conductor-insert-label">BPM</label>
                 <input type="number" id="conductor-insert-bpm" class="conductor-insert-input" min="20" max="999" step="1" autocomplete="off" />
+            </div>
+            <div class="conductor-dialog-field conductor-insert-pitch-wrap hidden" id="conductor-insert-pitch-wrap">
+                <label id="conductor-insert-pitch-label" for="conductor-insert-pitch-sem" class="conductor-insert-label">± semitones (full wheel)</label>
+                <input type="number" id="conductor-insert-pitch-sem" class="conductor-insert-input" min="0.01" max="96" step="any" autocomplete="off" title="Range 0.01–96 semitones (± at full wheel)" />
+                <p id="conductor-insert-pitch-help" class="conductor-insert-help">Standard MIDI default is ±2 semitones. Imported files may use another range (set via RPN).</p>
+                <div id="conductor-insert-pitch-scope-wrap" class="conductor-insert-pitch-scope-wrap">
+                    <span class="conductor-insert-label">Apply to</span>
+                    <label class="conductor-insert-radio-label"><input type="radio" name="conductor-insert-pitch-scope" id="conductor-insert-pitch-scope-track" value="track" checked /> This track’s MIDI channel only</label>
+                    <label class="conductor-insert-radio-label"><input type="radio" name="conductor-insert-pitch-scope" id="conductor-insert-pitch-scope-all" value="all" /> All 16 MIDI channels</label>
+                </div>
             </div>
             <div class="conductor-dialog-field conductor-insert-ts-wrap hidden" id="conductor-insert-ts-wrap">
                 <span id="conductor-insert-ts-label" class="conductor-insert-label">Time signature</span>

@@ -433,8 +433,38 @@ select.timesig-listbox:focus {
     margin-bottom: 20px;
 }
 .conductor-insert-bpm-wrap.hidden,
-.conductor-insert-ts-wrap.hidden {
+.conductor-insert-ts-wrap.hidden,
+.conductor-insert-pitch-wrap.hidden {
     display: none !important;
+}
+.conductor-insert-help {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    opacity: 0.82;
+}
+.conductor-insert-pitch-scope-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 4px;
+}
+.conductor-insert-pitch-scope-wrap.hidden {
+    display: none !important;
+}
+.conductor-insert-radio-label {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+.conductor-insert-radio-label input {
+    flex-shrink: 0;
 }
 .conductor-insert-label {
     font-size: 13px;
