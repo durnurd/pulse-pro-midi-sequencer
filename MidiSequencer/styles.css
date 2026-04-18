@@ -1129,6 +1129,83 @@ select.timesig-listbox:focus {
 #confirm-yes { background: var(--accent); color: #fff; }
 #confirm-no { background: var(--btn-bg); color: var(--text); }
 
+/* File ▸ Export ▸ Audio — blocks the whole UI until finish or cancel */
+#audio-export-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+    background: var(--dialog-overlay);
+}
+#audio-export-dialog.hidden {
+    display: none;
+}
+body.pulsepro-audio-export-modal-open {
+    overflow: hidden;
+}
+.audio-export-dialog-panel {
+    position: relative;
+    max-width: 440px;
+    width: 100%;
+    text-align: left;
+}
+.audio-export-dialog-heading {
+    margin: 0 0 8px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text);
+}
+.audio-export-dialog-sub {
+    margin: 0 0 12px;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text);
+    opacity: 0.92;
+}
+.audio-export-progress-track {
+    height: 14px;
+    border-radius: 7px;
+    background: rgba(128, 128, 128, 0.25);
+    overflow: hidden;
+    margin: 8px 0 10px;
+    border: 1px solid var(--toolbar-border);
+}
+.audio-export-progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 6px;
+    background: var(--accent);
+    transition: width 0.08s linear;
+}
+.audio-export-dialog-status {
+    margin: 0 0 14px;
+    min-height: 1.2em;
+    font-size: 13px;
+    color: var(--text);
+    opacity: 0.85;
+}
+.audio-export-cancel-btn {
+    margin: 0;
+    padding: 8px 20px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    background: var(--btn-bg);
+    color: var(--text);
+}
+.audio-export-cancel-btn:hover:not(:disabled) {
+    background: var(--btn-hover);
+}
+.audio-export-cancel-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
 /* April Fools: fake “Pro Mode” upsell when Middle C is “locked” */
 #fools-pro-upgrade-dialog {
     position: fixed;

@@ -34,7 +34,15 @@
                         <div class="menu-separator"></div>
                         <button id="btn-save-local" title="Save to browser">Save</button>
                         <button id="btn-save-as-local" title="Save as new song in browser">Save As…</button>
-                        <button id="btn-export-midi" title="Export MIDI file">Export…</button>
+                        <div class="menu-submenu" id="menu-export-wrap">
+                            <button type="button" class="menu-submenu-label" id="btn-export-menu" title="Export project" aria-haspopup="true" aria-expanded="false">
+                                Export <span class="menu-submenu-arrow" aria-hidden="true">▶</span>
+                            </button>
+                            <div class="menu-submenu-panel" id="export-panel" role="menu" aria-label="Export">
+                                <button type="button" id="btn-export-midi" role="menuitem" title="Standard MIDI file">MIDI (.mid)…</button>
+                                <button type="button" id="btn-export-audio" role="menuitem" title="">Audio…</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -271,6 +279,17 @@
             <button id="confirm-no">Cancel</button>
         </div>
     </div>
+    <div id="audio-export-dialog" class="hidden" role="dialog" aria-modal="true" aria-labelledby="audio-export-dialog-title" aria-hidden="true">
+        <div class="dialog-content audio-export-dialog-panel">
+            <h2 id="audio-export-dialog-title" class="audio-export-dialog-heading">Exporting audio</h2>
+            <p id="audio-export-dialog-sub" class="audio-export-dialog-sub"></p>
+            <div id="audio-export-progressbar" class="audio-export-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Export progress">
+                <div id="audio-export-progress-fill" class="audio-export-progress-fill"></div>
+            </div>
+            <p id="audio-export-dialog-status" class="audio-export-dialog-status" aria-live="polite"></p>
+            <button type="button" id="audio-export-cancel" class="audio-export-cancel-btn">Cancel</button>
+        </div>
+    </div>
     <div id="conductor-value-dialog" class="hidden" role="dialog" aria-modal="true" aria-labelledby="conductor-dialog-heading" aria-hidden="true">
         <div class="dialog-content conductor-value-dialog-panel">
             <h2 id="conductor-dialog-heading" class="conductor-dialog-heading">Insert conductor change</h2>
@@ -352,10 +371,12 @@
     <script src="audio.js"></script>
     <script src="midi-output.js"></script>
     <script src="state.js"></script>
+    <script src="pitch-bend-note-tool.js"></script>
     <script src="render.js"></script>
     <script src="interactions.js"></script>
     <script src="interactions2.js"></script>
     <script src="playback.js"></script>
+    <script src="export-audio.js"></script>
     <script src="midi-record.js"></script>
     <script src="midi.js"></script>
     <script src="auto-save.js"></script>

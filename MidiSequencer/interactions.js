@@ -16,6 +16,8 @@ function updateHighlightedKeys() {
         }
     } else if ((state.mode === 'resizing-left' || state.mode === 'resizing-right') && state.interactionNote) {
         state.highlightedKeys.add(state.interactionNote.note);
+    } else if ((state.mode === 'pb-drag-left' || state.mode === 'pb-drag-right' || state.mode === 'pb-drag-center') && state.interactionNote) {
+        state.highlightedKeys.add(state.interactionNote.note);
     }
 }
 function gc(e) {
@@ -29,6 +31,26 @@ function ht(gx, gy) {
     if (rx > nw - EDGE_THRESHOLD) return { type: 'edge-right', note };
     return { type: 'body', note };
 }
+
+function htGridFromEvent(e) {
+    const r = canvas.getBoundingClientRect();
+    const lx = e.clientX - r.left;
+    const ly = e.clientY - r.top;
+    const gx = lx + state.scrollX;
+    const gy = ly + state.scrollY;
+    if (typeof pitchBendHandleHitTestUnified === 'function') {
+        const pbh = pitchBendHandleHitTestUnified(lx, ly);
+        if (pbh) return pbh;
+    }
+    const h = ht(gx, gy);
+    if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay()
+        && (state.activeTool === 'cursor' || state.activeTool === 'pencil')
+        && h.note && (h.type === 'edge-left' || h.type === 'edge-right')) {
+        return { type: 'body', note: h.note };
+    }
+    return h;
+}
+
 function noteFromY(gy) { return TOTAL_MIDI_NOTES - 1 - Math.floor(gy / NOTE_HEIGHT); }
 
 function foolsBlockPlacedPitchIfNeeded(midiNote) {
@@ -53,7 +75,17 @@ canvas.addEventListener('mousemove', function(e) {
     if (state.mode !== 'idle') return;
     if (state.activeTool === 'eraser') { canvas.style.cursor = ERASER_CURSOR; return; }
     // Both cursor and pencil show resize/move cursors on existing notes
-    const h = ht(x, y);
+    const h = htGridFromEvent(e);
+    if ((state.activeTool === 'cursor' || state.activeTool === 'pencil') && typeof isPitchBendOverlay === 'function' && isPitchBendOverlay()
+        && (h.type === 'pb-handle-left' || h.type === 'pb-handle-right')) {
+        canvas.style.cursor = 'ns-resize';
+        return;
+    }
+    if ((state.activeTool === 'cursor' || state.activeTool === 'pencil') && typeof isPitchBendOverlay === 'function' && isPitchBendOverlay()
+        && h.type === 'pb-handle-center') {
+        canvas.style.cursor = 'move';
+        return;
+    }
     if (h.type === 'edge-left' || h.type === 'edge-right') canvas.style.cursor = 'ew-resize';
     else if (h.type === 'body') canvas.style.cursor = 'move';
     else canvas.style.cursor = state.activeTool === 'pencil' ? 'crosshair' : 'default';
@@ -162,7 +194,24 @@ function beginNoteEdit(h, x, y, e) {
 // Mousedown
 canvas.addEventListener('mousedown', function(e) {
     audioEngine.init(); const { x, y } = gc(e); const nn = noteFromY(y);
-    if (e.button === 2) { const h = ht(x, y); if (h.note) { pushUndoState('delete note'); removeNote(h.note.id); renderAll(); } return; }
+    if (e.button === 2) {
+        const h = htGridFromEvent(e);
+        if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay()
+            && (state.activeTool === 'cursor' || state.activeTool === 'pencil')
+            && h.note && (h.type === 'pb-handle-left' || h.type === 'pb-handle-right' || h.type === 'pb-handle-center')) {
+            pushUndoState('pitch bend');
+            if (typeof window.pitchBendRightClickHandle === 'function') {
+                window.pitchBendRightClickHandle(h);
+            }
+            if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+                window.playbackResyncAutomationIndicesAfterRecord();
+            }
+            renderAll();
+            return;
+        }
+        if (h.note) { pushUndoState('delete note'); removeNote(h.note.id); renderAll(); }
+        return;
+    }
     if (e.button !== 0) return;
     if (state.conductorPlacementMode && !state.conductor.locked) {
         const tick = Math.max(0, snapTick(x));
@@ -177,13 +226,41 @@ canvas.addEventListener('mousedown', function(e) {
         }
         pushUndoState('erase notes');
         state.mode = 'erasing'; state.interactionData = { erasedIds: new Set() };
-        const h = ht(x, y);
+        const h = htGridFromEvent(e);
         if (h.note) { state.interactionData.erasedIds.add(h.note.id); removeNote(h.note.id); renderAll(); }
         return;
     }
     // Pencil: if clicking on an existing note, behave like cursor (resize/move)
     if (state.activeTool === 'pencil') {
-        const h = ht(x, y);
+        const h = htGridFromEvent(e);
+        if (h.type === 'pb-handle-left' || h.type === 'pb-handle-right') {
+            switchToNoteTrack(h.note);
+            if (!updateSelectionForClick(h.note.id, e)) { renderAll(); return; }
+            pushUndoState('pitch bend');
+            state.mode = h.type === 'pb-handle-left' ? 'pb-drag-left' : 'pb-drag-right';
+            state.interactionNote = h.note;
+            const r0 = canvas.getBoundingClientRect();
+            const gy0 = e.clientY - r0.top + state.scrollY;
+            state.interactionData = pitchBendBuildHandleDragState(h.note, h.type === 'pb-handle-left' ? 'left' : 'right', gy0);
+            canvas.style.cursor = 'ns-resize';
+            updateHighlightedKeys(); renderAll(); return;
+        }
+        if (h.type === 'pb-handle-center') {
+            switchToNoteTrack(h.note);
+            if (!updateSelectionForClick(h.note.id, e)) { renderAll(); return; }
+            pushUndoState('pitch bend');
+            state.mode = 'pb-drag-center';
+            state.interactionNote = h.note;
+            state.interactionData = pitchBendBuildCenterDragState(h.note, x, y);
+            if (typeof window.pitchBendApplyCenterHandleDrag === 'function') {
+                window.pitchBendApplyCenterHandleDrag(state.interactionData, x, y);
+            }
+            if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+                window.playbackResyncAutomationIndicesAfterRecord();
+            }
+            canvas.style.cursor = 'move';
+            updateHighlightedKeys(); renderAll(); return;
+        }
         if (h.type !== 'empty') {
             beginNoteEdit(h, x, y, e);
             renderAll(); return;
@@ -198,11 +275,55 @@ canvas.addEventListener('mousedown', function(e) {
         const n = addNote(nnPlace, state.activeChannel, tick, TICKS_PER_SNAP, lastVelocityForNote(nnPlace));
         state.mode = 'placing'; state.interactionNote = n;
         state.interactionData = { originTick: tick };
+        if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay()) {
+            const rPl = canvas.getBoundingClientRect();
+            state.interactionData.placeBendStartGy = e.clientY - rPl.top + state.scrollY;
+            state.interactionData.placeBendAccDy = 0;
+            state.interactionData.placeBendVPre = samplePitchBendValue14BeforeTick(n.channel, n.startTick);
+            state.interactionData.placeBendTailBackup = state.pitchBends
+                .filter(e => e.channel === n.channel && e.tick >= n.startTick)
+                .map(e => ({ tick: e.tick, channel: e.channel, value: e.value }));
+            state.interactionData.placeBendLastPreviewValue14 = null;
+            if (typeof window.pitchBendSyncPlacementRamp === 'function') {
+                window.pitchBendSyncPlacementRamp(n, state.interactionData);
+            }
+            if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+                window.playbackResyncAutomationIndicesAfterRecord();
+            }
+        }
         state.selectedNoteIds.clear(); state.selectedNoteIds.add(n.id);
         audioEngine.noteOn(nnPlace, state.activeChannel); updateHighlightedKeys(); renderAll(); return;
     }
     // Cursor
-    const h = ht(x, y);
+    const h = htGridFromEvent(e);
+    if (h.type === 'pb-handle-left' || h.type === 'pb-handle-right') {
+        switchToNoteTrack(h.note);
+        if (!updateSelectionForClick(h.note.id, e)) { renderAll(); return; }
+        pushUndoState('pitch bend');
+        state.mode = h.type === 'pb-handle-left' ? 'pb-drag-left' : 'pb-drag-right';
+        state.interactionNote = h.note;
+        const r1 = canvas.getBoundingClientRect();
+        const gy1 = e.clientY - r1.top + state.scrollY;
+        state.interactionData = pitchBendBuildHandleDragState(h.note, h.type === 'pb-handle-left' ? 'left' : 'right', gy1);
+        canvas.style.cursor = 'ns-resize';
+        updateHighlightedKeys(); renderAll(); return;
+    }
+    if (h.type === 'pb-handle-center') {
+        switchToNoteTrack(h.note);
+        if (!updateSelectionForClick(h.note.id, e)) { renderAll(); return; }
+        pushUndoState('pitch bend');
+        state.mode = 'pb-drag-center';
+        state.interactionNote = h.note;
+        state.interactionData = pitchBendBuildCenterDragState(h.note, x, y);
+        if (typeof window.pitchBendApplyCenterHandleDrag === 'function') {
+            window.pitchBendApplyCenterHandleDrag(state.interactionData, x, y);
+        }
+        if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+            window.playbackResyncAutomationIndicesAfterRecord();
+        }
+        canvas.style.cursor = 'move';
+        updateHighlightedKeys(); renderAll(); return;
+    }
     if (h.type !== 'empty') {
         beginNoteEdit(h, x, y, e);
     } else {
@@ -287,7 +408,21 @@ function moveDrag(gx, gy, shiftHeld, altHeld) {
 document.addEventListener('mousemove', function(e) {
     if (state.mode === 'idle') return;
     const r = canvas.getBoundingClientRect(), gx = e.clientX - r.left + state.scrollX, gy = e.clientY - r.top + state.scrollY;
-    if (state.mode === 'placing') { const n = state.interactionNote; n.durationTicks = Math.max(TICKS_PER_SNAP, Math.max(state.interactionData.originTick, snapTick(gx)) - n.startTick + TICKS_PER_SNAP); updateHighlightedKeys(); renderAll(); }
+    if (state.mode === 'placing') {
+        const n = state.interactionNote;
+        n.durationTicks = Math.max(TICKS_PER_SNAP, Math.max(state.interactionData.originTick, snapTick(gx)) - n.startTick + TICKS_PER_SNAP);
+        if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay() && state.activeTool === 'pencil'
+            && state.interactionData && state.interactionData.placeBendStartGy != null) {
+            state.interactionData.placeBendAccDy = gy - state.interactionData.placeBendStartGy;
+            if (typeof window.pitchBendSyncPlacementRamp === 'function') {
+                window.pitchBendSyncPlacementRamp(n, state.interactionData);
+            }
+            if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+                window.playbackResyncAutomationIndicesAfterRecord();
+            }
+        }
+        updateHighlightedKeys(); renderAll();
+    }
     else if (state.mode === 'resizing-right') {
         // Compute delta from the primary (clicked) note's original end
         const d = state.interactionData;
@@ -332,7 +467,24 @@ document.addEventListener('mousemove', function(e) {
         }
         renderAll();
     }
-    else if (state.mode === 'erasing') { const h = ht(gx, gy); if (h.note && !state.interactionData.erasedIds.has(h.note.id)) { state.interactionData.erasedIds.add(h.note.id); removeNote(h.note.id); renderAll(); } }
+    else if (state.mode === 'erasing') { const h = htGrid(gx, gy); if (h.note && !state.interactionData.erasedIds.has(h.note.id)) { state.interactionData.erasedIds.add(h.note.id); removeNote(h.note.id); renderAll(); } }
+    else if (state.mode === 'pb-drag-left' || state.mode === 'pb-drag-right') {
+        pitchBendApplyHandleDragFromMouseGy(state.interactionData, gy);
+        if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+            window.playbackResyncAutomationIndicesAfterRecord();
+        }
+        renderAll();
+    }
+    else if (state.mode === 'pb-drag-center' && state.interactionData) {
+        const wp = gridPointerToWorld(e.clientX - r.left, e.clientY - r.top);
+        if (typeof window.pitchBendApplyCenterHandleDrag === 'function') {
+            window.pitchBendApplyCenterHandleDrag(state.interactionData, wp.x, wp.y);
+        }
+        if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+            window.playbackResyncAutomationIndicesAfterRecord();
+        }
+        renderAll();
+    }
 });
 
 // Finalize velocity: clamp virtual velocities to 0-127 on edit completion
@@ -348,7 +500,25 @@ function finalizeVelocity() {
 // Mouseup
 document.addEventListener('mouseup', function(e) {
     if (state.mode === 'placing') {
-        if (state.interactionNote) audioEngine.noteOff(state.interactionNote.note, state.interactionNote.channel);
+        if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay() && state.activeTool === 'pencil'
+            && state.interactionNote && state.interactionData
+            && state.interactionData.placeBendStartGy != null) {
+            const n = state.interactionNote;
+            if (typeof window.pitchBendSyncPlacementRamp === 'function') {
+                window.pitchBendSyncPlacementRamp(n, state.interactionData);
+            }
+            if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+                window.playbackResyncAutomationIndicesAfterRecord();
+            }
+        }
+        if (state.interactionNote) {
+            if (state.interactionData && state.interactionData.placeBendVPre != null
+                && state.interactionData.placeBendStartGy != null) {
+                const v = Math.max(0, Math.min(16383, state.interactionData.placeBendVPre | 0));
+                audioEngine.pitchWheel(state.interactionNote.channel, v);
+            }
+            audioEngine.noteOff(state.interactionNote.note, state.interactionNote.channel);
+        }
         finalizeVelocity();
         state.highlightedKeys.clear();
         state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default'; renderAll();
@@ -365,6 +535,15 @@ document.addEventListener('mouseup', function(e) {
     } else if (state.mode === 'moving') {
         if (state.interactionNote) { audioEngine.noteOff(state.interactionNote.note, state.interactionNote.channel); if (state.interactionData && state.interactionData.lastPreviewNote !== undefined) audioEngine.noteOff(state.interactionData.lastPreviewNote, state.interactionNote.channel); }
         finalizeVelocity();
+        state.highlightedKeys.clear();
+        state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default'; renderAll();
+    } else if (state.mode === 'pb-drag-left' || state.mode === 'pb-drag-right' || state.mode === 'pb-drag-center') {
+        if (state.interactionNote) {
+            audioEngine.noteOff(state.interactionNote.note, state.interactionNote.channel);
+        }
+        if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+            window.playbackResyncAutomationIndicesAfterRecord();
+        }
         state.highlightedKeys.clear();
         state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default'; renderAll();
     } else if (state.mode === 'selecting' || state.mode === 'erasing') {

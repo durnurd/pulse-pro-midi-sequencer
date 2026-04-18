@@ -909,6 +909,18 @@
 
     // MIDI Export/Import
     document.getElementById('btn-export-midi').addEventListener('click', downloadMidiFile);
+    const btnExportAudio = document.getElementById('btn-export-audio');
+    if (btnExportAudio) {
+        btnExportAudio.addEventListener('click', function() {
+            if (btnExportAudio.disabled) return;
+            if (typeof window.exportTimelineAudioToFile === 'function') {
+                void window.exportTimelineAudioToFile();
+            }
+        });
+    }
+    if (typeof window.pulseProRefreshAudioExportMenuLabel === 'function') {
+        window.pulseProRefreshAudioExportMenuLabel();
+    }
     document.getElementById('btn-import-midi').addEventListener('click', openMidiFile);
 
     // Sync UI after MIDI import (called from midi.js)
@@ -1166,6 +1178,7 @@
             }
         }
     }
+    window.pulseProCloseAllDropdowns = closeAllDropdowns;
 
     function isAnyMenuOpen() {
         return document.querySelector('.dropdown.show') !== null;

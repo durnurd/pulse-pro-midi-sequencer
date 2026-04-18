@@ -36,6 +36,8 @@ const state = {
     isRepeat: false,
     /** When true, MIDI note on/off from hardware is written to the piano roll during playback. */
     midiRecordArmed: false,
+    /** True while File ▸ Export ▸ Audio is recording the built-in mix (blocks pause / visibility auto-pause). */
+    audioExportInProgress: false,
     /** When true, Web MIDI note on/off lights matching keys on the on-screen keyboard (View menu). */
     midiKeyboardMonitor: false,
     playbackStartTime: 0,
@@ -84,7 +86,7 @@ const state = {
     midiInputHeldKeys: new Set(),
 
     // Interaction mode
-    mode: 'idle', // idle, placing, resizing-left, resizing-right, moving, selecting, dragging-playback, pencil-drawing, erasing
+    mode: 'idle', // idle, placing, resizing-left, resizing-right, moving, selecting, dragging-playback, pencil-drawing, erasing, pb-drag-left, pb-drag-right, pb-drag-center
     interactionNote: null,
     interactionData: null,
 
@@ -220,20 +222,53 @@ function addNote(note, channel, startTick, durationTicks, velocity = 100, track 
     return n;
 }
 
+/** True if tick lies in [start, start+duration) for some note on the MIDI channel. */
+function pitchBendTickUnderAnyNoteOnChannel(tick, ch) {
+    const t = tick | 0;
+    const c = ch | 0;
+    for (let i = 0; i < state.notes.length; i++) {
+        const n = state.notes[i];
+        if ((n.channel | 0) !== c) continue;
+        const t0 = n.startTick | 0;
+        const t1 = t0 + (n.durationTicks | 0);
+        if (t >= t0 && t < t1) return true;
+    }
+    return false;
+}
+
+/** Remove pitch-bend events on given channels whose tick is not under any note on that channel. */
+function removeOrphanPitchBendsForChannels(channels) {
+    const chSet = channels instanceof Set ? channels : new Set(channels);
+    if (chSet.size === 0) return;
+    state.pitchBends = state.pitchBends.filter(e => {
+        const ch = e.channel | 0;
+        if (!chSet.has(ch)) return true;
+        return pitchBendTickUnderAnyNoteOnChannel(e.tick, ch);
+    });
+    state.pitchBends.sort((a, b) => a.tick - b.tick || a.channel - b.channel);
+}
+
 function removeNote(id) {
     const idx = state.notes.findIndex(n => n.id === id);
     if (idx >= 0) {
         const trk = state.notes[idx].track;
+        const ch = state.notes[idx].channel | 0;
         state.notes.splice(idx, 1);
         state.selectedNoteIds.delete(id);
+        removeOrphanPitchBendsForChannels([ch]);
         // If track is now empty, reassign colors
         if (!state.notes.some(n => n.track === trk)) reassignTrackColors();
     }
 }
 
 function removeSelectedNotes() {
+    const chans = new Set();
+    for (const n of state.notes) {
+        if (state.selectedNoteIds.has(n.id)) chans.add(n.channel | 0);
+    }
     state.notes = state.notes.filter(n => !state.selectedNoteIds.has(n.id));
     state.selectedNoteIds.clear();
+    removeOrphanPitchBendsForChannels(chans);
     reassignTrackColors();
 }
 

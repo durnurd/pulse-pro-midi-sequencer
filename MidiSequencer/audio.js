@@ -5,10 +5,12 @@ class AudioEngine {
         this.activeNotes = new Map(); // key -> true (for compatibility with interactions2.js)
         this.channelInstruments = new Array(16).fill(0);
         this.synth = null;          // SpessaSynth WorkletSynthesizer
+        this.masterGain = null;   // routes synth → speakers (and optional MediaStreamDestination for export)
         this.ready = false;         // true once synth + soundfont are loaded
         this._initPromise = null;
         this._currentSoundFontId = null;
         this._loadedSoundFonts = new Map(); // id → ArrayBuffer (cached for switching)
+        this._exportMediaDest = null;
     }
 
     async init() {
@@ -27,7 +29,31 @@ class AudioEngine {
 
         // Create the synthesizer (WorkletSynthesizer is set on window by the module loader)
         this.synth = new window.SpessaSynthWorkletSynthesizer(this.ctx);
-        this.synth.connect(this.ctx.destination);
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 1;
+        this.synth.connect(this.masterGain);
+        this.masterGain.connect(this.ctx.destination);
+    }
+
+    /**
+     * Adds a tap from the main mix into a MediaStreamDestination for MediaRecorder export.
+     * @returns {MediaStream|null}
+     */
+    connectExportMediaDestination() {
+        if (!this.masterGain || !this.ctx) return null;
+        if (this._exportMediaDest) return this._exportMediaDest.stream;
+        this._exportMediaDest = this.ctx.createMediaStreamDestination();
+        this.masterGain.connect(this._exportMediaDest);
+        return this._exportMediaDest.stream;
+    }
+
+    disconnectExportMediaDestination() {
+        if (this._exportMediaDest && this.masterGain) {
+            try {
+                this.masterGain.disconnect(this._exportMediaDest);
+            } catch (e) { /* already disconnected */ }
+            this._exportMediaDest = null;
+        }
     }
 
     // Load a SoundFont file by URL. Returns true if the font was applied, false on failure.

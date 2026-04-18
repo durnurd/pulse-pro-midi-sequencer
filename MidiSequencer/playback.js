@@ -1,5 +1,8 @@
 // playback.js - Playback engine
 let playbackAnimFrame = null;
+/** When the tab is in the background, requestAnimationFrame is heavily throttled; drive playback with this interval instead. */
+const PLAYBACK_BACKGROUND_INTERVAL_MS = 20;
+let playbackLoopTimer = null;
 let playbackActiveNotes = new Map(); // id -> {note, channel, velocity, track} for currently sounding notes
 let playbackPBIndex = 0;   // next pitch bend event index to process
 let playbackCCIndex = 0;   // next controller change event index to process
@@ -17,6 +20,31 @@ function reanchorPlaybackClockIfPlaying() {
 }
 
 window.reanchorPlaybackClockIfPlaying = reanchorPlaybackClockIfPlaying;
+
+function clearPlaybackLoopDriver() {
+    if (playbackAnimFrame != null) {
+        cancelAnimationFrame(playbackAnimFrame);
+        playbackAnimFrame = null;
+    }
+    if (playbackLoopTimer != null) {
+        clearTimeout(playbackLoopTimer);
+        playbackLoopTimer = null;
+    }
+}
+
+/** Schedule the next editor playback tick using rAF (foreground) or a timer (background tab / minimized window). */
+function scheduleNextPlaybackLoop() {
+    if (!state.isPlaying) return;
+    clearPlaybackLoopDriver();
+    if (document.hidden) {
+        playbackLoopTimer = setTimeout(function playbackBackgroundTick() {
+            playbackLoopTimer = null;
+            playbackLoop();
+        }, PLAYBACK_BACKGROUND_INTERVAL_MS);
+    } else {
+        playbackAnimFrame = requestAnimationFrame(playbackLoop);
+    }
+}
 
 function syncPlaybackSoundingTracksFromMap(activeMap) {
     state.playbackSoundingTracks.clear();
@@ -98,6 +126,7 @@ function playbackResyncAutomationIndicesAfterRecord() {
 window.playbackResyncAutomationIndicesAfterRecord = playbackResyncAutomationIndicesAfterRecord;
 
 function pausePlayback() {
+    if (state.audioExportInProgress) return;
     if (state.midiRecordArmed && state.isPlaying) return;
     if (typeof window.pulseProMidiRecordFlushPending === 'function') {
         window.pulseProMidiRecordFlushPending(Math.round(state.playbackTick));
@@ -105,8 +134,7 @@ function pausePlayback() {
     stopLibraryPreview();
     state.isPlaying = false;
     state.isPaused = true;
-    if (playbackAnimFrame) cancelAnimationFrame(playbackAnimFrame);
-    playbackAnimFrame = null;
+    clearPlaybackLoopDriver();
     audioEngine.allNotesOff();
     if (typeof window.pulseProMidiOutAllNotesOff === 'function') {
         window.pulseProMidiOutAllNotesOff();
@@ -130,8 +158,7 @@ function stopPlayback(options) {
     stopLibraryPreview();
     state.isPlaying = false;
     state.isPaused = false;
-    if (playbackAnimFrame) cancelAnimationFrame(playbackAnimFrame);
-    playbackAnimFrame = null;
+    clearPlaybackLoopDriver();
     audioEngine.allNotesOff();
     audioEngine.resetAllControllers();
     playbackActiveNotes.clear();
@@ -159,6 +186,7 @@ function stopPlayback(options) {
 }
 
 function togglePlayPause() {
+    if (state.audioExportInProgress) return;
     if (state.isPlaying) {
         if (state.midiRecordArmed) return;
         pausePlayback();
@@ -289,8 +317,10 @@ function playbackLoop() {
         }
     }
 
-    renderAll();
-    playbackAnimFrame = requestAnimationFrame(playbackLoop);
+    if (!document.hidden) {
+        renderAll();
+    }
+    scheduleNextPlaybackLoop();
 }
 
 function updatePlaybackButtons() {
@@ -491,6 +521,7 @@ function restoreEditorInstrumentsToAudioEngine() {
 function stopLibraryPreview() {
     if (!libraryPreviewCtx) return;
     if (libraryPreviewCtx.rafId) cancelAnimationFrame(libraryPreviewCtx.rafId);
+    if (libraryPreviewCtx.timerId) clearTimeout(libraryPreviewCtx.timerId);
     libraryPreviewCtx = null;
     audioEngine.allNotesOff();
     audioEngine.resetAllControllers();
@@ -506,6 +537,27 @@ function stopLibraryPreview() {
 
 function libraryPreviewTicksPerSecond(bpm) {
     return (bpm / 60) * MIDI_TPQN;
+}
+
+function scheduleNextLibraryPreviewLoop() {
+    if (!libraryPreviewCtx) return;
+    const st = libraryPreviewCtx;
+    if (st.rafId != null) {
+        cancelAnimationFrame(st.rafId);
+        st.rafId = null;
+    }
+    if (st.timerId != null) {
+        clearTimeout(st.timerId);
+        st.timerId = null;
+    }
+    if (document.hidden) {
+        st.timerId = setTimeout(function libraryPreviewBackgroundTick() {
+            st.timerId = null;
+            libraryPreviewLoop();
+        }, PLAYBACK_BACKGROUND_INTERVAL_MS);
+    } else {
+        st.rafId = requestAnimationFrame(libraryPreviewLoop);
+    }
 }
 
 function libraryPreviewLoop() {
@@ -564,7 +616,7 @@ function libraryPreviewLoop() {
         st.ccIndex++;
     }
 
-    st.rafId = requestAnimationFrame(libraryPreviewLoop);
+    scheduleNextLibraryPreviewLoop();
 }
 
 /**
@@ -619,6 +671,7 @@ function startLibraryPreview(arrayBuffer, songId) {
     libraryPreviewCtx = {
         songId: songId,
         rafId: null,
+        timerId: null,
         notes: notes,
         pitchBends: r.pitchBends || [],
         controllerChanges: r.controllerChanges || [],
@@ -631,7 +684,7 @@ function startLibraryPreview(arrayBuffer, songId) {
         endTick: endTick,
     };
     seekLibraryPreviewAutomation(0, libraryPreviewCtx.pitchBends, libraryPreviewCtx.controllerChanges, libraryPreviewCtx);
-    libraryPreviewCtx.rafId = requestAnimationFrame(libraryPreviewLoop);
+    scheduleNextLibraryPreviewLoop();
     if (window.pulseProRefreshSongLibraryIfVisible) window.pulseProRefreshSongLibraryIfVisible();
 }
 
@@ -639,21 +692,15 @@ function getLibraryPreviewSongId() {
     return libraryPreviewCtx ? libraryPreviewCtx.songId : null;
 }
 
-(function initPausePlaybackWhenPageInactive() {
-    function pauseIfNothingShouldPlay() {
-        if (state.midiRecordArmed && state.isPlaying) return;
-        if (state.isPlaying || libraryPreviewCtx) pausePlayback();
-    }
+(function initPlaybackDriverOnVisibilityChange() {
     document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'hidden') pauseIfNothingShouldPlay();
-    });
-    window.addEventListener('blur', function() {
-        requestAnimationFrame(function() {
-            requestAnimationFrame(function() {
-                if (document.visibilityState === 'hidden') return;
-                if (!document.hasFocus()) pauseIfNothingShouldPlay();
-            });
-        });
+        if (state.isPlaying) {
+            clearPlaybackLoopDriver();
+            scheduleNextPlaybackLoop();
+        }
+        if (libraryPreviewCtx) {
+            scheduleNextLibraryPreviewLoop();
+        }
     });
 })();
 

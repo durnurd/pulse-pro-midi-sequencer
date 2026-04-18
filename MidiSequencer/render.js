@@ -6,6 +6,9 @@ const keyCtx = keyCanvas.getContext('2d');
 const pbCanvas = document.getElementById('playback-canvas');
 const pbCtx = pbCanvas.getContext('2d');
 
+/** Per-note pitch-bend ribbon stroke (px); fixed so it does not scale with NOTE_HEIGHT / vertical zoom. */
+const PITCH_BEND_NOTE_RIBBON_LINE_PX = 2;
+
 /**
  * Inner height for layout/scroll (clientHeight minus vertical padding).
  * When the automation strip is docked, panels use padding-bottom to reserve space;
@@ -26,6 +29,161 @@ function getMaxPitchScrollPx() {
 function getVerticalTimePanMaxPx() {
     const spanTicks = typeof getTimelineSpanTicks === 'function' ? getTimelineSpanTicks() : Math.max(MIDI_TPQN * 4, getEndTick());
     return Math.max(0, spanTicks * SNAP_WIDTH - state.gridHeight);
+}
+
+function drawPitchBendRibbonSampleSteps(nwPx, nhPx, isVertical) {
+    const len = isVertical ? Math.abs(nhPx || 0) : (nwPx || 0);
+    return Math.min(2048, Math.max(160, Math.ceil(Math.max(len, 12))));
+}
+
+function drawPitchBendHorizontalNoteRibbon(gridCtx, n, nx, nw, row, sy) {
+    if (typeof pitchBendVisualOffsetPxAtTick !== 'function') return;
+    const baseRowY = row * NOTE_HEIGHT - sy;
+    const steps = drawPitchBendRibbonSampleSteps(nw, 0, false);
+    const dur = Math.max(1, n.durationTicks);
+    gridCtx.save();
+    gridCtx.globalAlpha = currentTheme === 'dark' ? 0.5 : 0.48;
+    gridCtx.strokeStyle = currentTheme === 'dark' ? 'rgba(255,255,255,0.95)' : 'rgba(0,0,0,0.85)';
+    gridCtx.lineWidth = PITCH_BEND_NOTE_RIBBON_LINE_PX;
+    gridCtx.lineJoin = 'round';
+    gridCtx.lineCap = 'round';
+    gridCtx.beginPath();
+    for (let s = 0; s <= steps; s++) {
+        const frac = s / steps;
+        const px = nx + frac * nw;
+        const tickR = dur <= 1 ? n.startTick
+            : Math.min(n.startTick + n.durationTicks - 1, Math.round(n.startTick + frac * (dur - 1)));
+        const off = pitchBendVisualOffsetPxAtTick(n.channel, tickR);
+        const pyCenter = baseRowY + off + NOTE_HEIGHT / 2;
+        if (s === 0) gridCtx.moveTo(px, pyCenter);
+        else gridCtx.lineTo(px, pyCenter);
+    }
+    gridCtx.stroke();
+    gridCtx.restore();
+}
+
+function drawPitchBendHorizontalHandles(gridCtx, n, nx, nw, row, sy) {
+    if (typeof pitchBendVisualOffsetPxAtTick !== 'function' || typeof PITCH_BEND_HANDLE_PX !== 'number') return;
+    const baseRowY = row * NOTE_HEIGHT - sy;
+    const hw = Math.min(PITCH_BEND_HANDLE_PX, Math.max(4, nw / 4));
+    const offL = pitchBendVisualOffsetPxAtTick(n.channel, n.startTick);
+    const offR = pitchBendVisualOffsetPxAtTick(n.channel, Math.max(n.startTick, n.startTick + n.durationTicks - 1));
+    const cyL = baseRowY + offL + NOTE_HEIGHT / 2;
+    const cyR = baseRowY + offR + NOTE_HEIGHT / 2;
+    gridCtx.save();
+    gridCtx.globalAlpha = 0.92;
+    gridCtx.fillStyle = currentTheme === 'dark' ? '#dde0ff' : '#2a2a38';
+    gridCtx.strokeStyle = currentTheme === 'dark' ? '#ffffff' : '#111111';
+    gridCtx.lineWidth = 1;
+    gridCtx.beginPath();
+    gridCtx.rect(nx - 0.5, cyL - 5, hw + 1, 10);
+    gridCtx.fill();
+    gridCtx.stroke();
+    gridCtx.beginPath();
+    gridCtx.rect(nx + nw - hw - 0.5, cyR - 5, hw + 1, 10);
+    gridCtx.fill();
+    gridCtx.stroke();
+    if (typeof PITCH_BEND_CENTER_HANDLE_R === 'number') {
+        const uC = typeof window.pitchBendCenterHandleTimeFractionForNote === 'function'
+            ? window.pitchBendCenterHandleTimeFractionForNote(n) : 0.5;
+        let tickM;
+        if (typeof window.pitchBendCenterHandleAnchorTick === 'function') {
+            tickM = window.pitchBendCenterHandleAnchorTick(n);
+        } else {
+            const t0a = n.startTick | 0;
+            const t1a = t0a + (n.durationTicks | 0);
+            const dura = Math.max(1, t1a - t0a);
+            tickM = dura <= 1 ? t0a : Math.min(t1a - 1, Math.max(t0a, Math.round(t0a + uC * (dura - 1))));
+        }
+        const cx = nx + nw * uC;
+        const offM = pitchBendVisualOffsetPxAtTick(n.channel, tickM);
+        const cy = baseRowY + offM + NOTE_HEIGHT / 2;
+        const rr = Math.min(PITCH_BEND_CENTER_HANDLE_R + 2, Math.max(5, nw * 0.08));
+        gridCtx.beginPath();
+        gridCtx.moveTo(cx, cy - rr);
+        gridCtx.lineTo(cx + rr, cy);
+        gridCtx.lineTo(cx, cy + rr);
+        gridCtx.lineTo(cx - rr, cy);
+        gridCtx.closePath();
+        gridCtx.fillStyle = currentTheme === 'dark' ? '#a8e6cf' : '#1a6b4a';
+        gridCtx.fill();
+        gridCtx.strokeStyle = currentTheme === 'dark' ? '#ffffff' : '#111111';
+        gridCtx.lineWidth = 1;
+        gridCtx.stroke();
+    }
+    gridCtx.restore();
+}
+
+function drawPitchBendVerticalNoteRibbon(gridCtx, n, xLeftBase, yTop, yBottom, nw, nh) {
+    if (typeof pitchBendVisualOffsetPxAtTick !== 'function') return;
+    const steps = drawPitchBendRibbonSampleSteps(0, nh, true);
+    const dur = Math.max(1, n.durationTicks);
+    gridCtx.save();
+    gridCtx.globalAlpha = currentTheme === 'dark' ? 0.5 : 0.48;
+    gridCtx.strokeStyle = currentTheme === 'dark' ? 'rgba(255,255,255,0.95)' : 'rgba(0,0,0,0.85)';
+    gridCtx.lineWidth = PITCH_BEND_NOTE_RIBBON_LINE_PX;
+    gridCtx.lineJoin = 'round';
+    gridCtx.lineCap = 'round';
+    gridCtx.beginPath();
+    for (let s = 0; s <= steps; s++) {
+        const frac = s / steps;
+        const tickR = dur <= 1 ? n.startTick
+            : Math.min(n.startTick + n.durationTicks - 1, Math.round(n.startTick + frac * (dur - 1)));
+        const py = yBottom - frac * (yBottom - yTop);
+        const off = -pitchBendVisualOffsetPxAtTick(n.channel, tickR);
+        const pxCenter = xLeftBase + off + nw / 2;
+        if (s === 0) gridCtx.moveTo(pxCenter, py);
+        else gridCtx.lineTo(pxCenter, py);
+    }
+    gridCtx.stroke();
+    gridCtx.restore();
+}
+
+function drawPitchBendVerticalHandles(gridCtx, n, xLeftBase, yTop, yBottom, nw, nh) {
+    if (typeof pitchBendVisualOffsetPxAtTick !== 'function' || typeof PITCH_BEND_HANDLE_PX !== 'number') return;
+    const hw = Math.min(PITCH_BEND_HANDLE_PX, Math.max(4, Math.abs(nh) / 4));
+    const offL = -pitchBendVisualOffsetPxAtTick(n.channel, n.startTick);
+    const offR = -pitchBendVisualOffsetPxAtTick(n.channel, Math.max(n.startTick, n.startTick + n.durationTicks - 1));
+    const cxL = xLeftBase + offL + nw / 2;
+    const cxR = xLeftBase + offR + nw / 2;
+    gridCtx.save();
+    gridCtx.globalAlpha = 0.92;
+    gridCtx.fillStyle = currentTheme === 'dark' ? '#dde0ff' : '#2a2a38';
+    gridCtx.strokeStyle = currentTheme === 'dark' ? '#ffffff' : '#111111';
+    gridCtx.lineWidth = 1;
+    gridCtx.beginPath();
+    gridCtx.rect(cxL - 5, yBottom - hw - 0.5, 10, hw + 1);
+    gridCtx.fill();
+    gridCtx.stroke();
+    gridCtx.beginPath();
+    gridCtx.rect(cxR - 5, yTop - 0.5, 10, hw + 1);
+    gridCtx.fill();
+    gridCtx.stroke();
+    if (typeof PITCH_BEND_CENTER_HANDLE_R === 'number') {
+        const dur = Math.max(1, n.durationTicks);
+        const uC = typeof window.pitchBendCenterHandleTimeFractionForNote === 'function'
+            ? window.pitchBendCenterHandleTimeFractionForNote(n) : 0.5;
+        const tickM = typeof window.pitchBendCenterHandleAnchorTick === 'function'
+            ? window.pitchBendCenterHandleAnchorTick(n)
+            : Math.min(n.startTick + dur - 1, Math.max(n.startTick, Math.round(n.startTick + uC * (dur - 1))));
+        const frac = dur <= 1 ? 0 : uC;
+        const py = yBottom - frac * (yBottom - yTop);
+        const offM = -pitchBendVisualOffsetPxAtTick(n.channel, tickM);
+        const cx = xLeftBase + offM + nw / 2;
+        const rr = Math.min(PITCH_BEND_CENTER_HANDLE_R + 2, Math.max(5, Math.abs(nh) * 0.08));
+        gridCtx.beginPath();
+        gridCtx.moveTo(cx, py - rr);
+        gridCtx.lineTo(cx + rr, py);
+        gridCtx.lineTo(cx, py + rr);
+        gridCtx.lineTo(cx - rr, py);
+        gridCtx.closePath();
+        gridCtx.fillStyle = currentTheme === 'dark' ? '#a8e6cf' : '#1a6b4a';
+        gridCtx.fill();
+        gridCtx.strokeStyle = currentTheme === 'dark' ? '#ffffff' : '#111111';
+        gridCtx.lineWidth = 1;
+        gridCtx.stroke();
+    }
+    gridCtx.restore();
 }
 
 /** Tint + diagonal hatch so out-of-key rows read clearly vs black/white keys. */
@@ -191,6 +349,7 @@ function renderGridVertical() {
         const yTop = seamY - (n.startTick + n.durationTicks - pb) * SNAP_WIDTH + pan;
         const nh = yBottom - yTop;
         const nw = NOTE_HEIGHT;
+        const pbRollV = state.automationOverlay === 'pitchBend';
         if (xLeft + nw < 0 || xLeft > w || yBottom < 0 || yTop > h) continue;
 
         const selected = state.selectedNoteIds.has(n.id);
@@ -236,7 +395,7 @@ function renderGridVertical() {
             gridCtx.restore();
         }
 
-        if (overlayEvents) {
+        if (overlayEvents && state.automationOverlay !== 'pitchBend') {
             const evts = overlayEvents[n.channel];
             const pad = 2;
             const innerLeft = xLeft + pad;
@@ -290,6 +449,11 @@ function renderGridVertical() {
                 gridCtx.stroke();
                 gridCtx.restore();
             }
+        }
+
+        if (pbRollV) {
+            drawPitchBendVerticalNoteRibbon(gridCtx, n, xLeft, yTop, yBottom, nw, nh);
+            drawPitchBendVerticalHandles(gridCtx, n, xLeft, yTop, yBottom, nw, nh);
         }
 
         if (selected) {
@@ -470,6 +634,7 @@ function renderGrid() {
         if (trk && trk.hidden) continue;
         const row = TOTAL_MIDI_NOTES - 1 - n.note;
         const nx = n.startTick * SNAP_WIDTH - sx;
+        const pbRollH = state.automationOverlay === 'pitchBend';
         const ny = row * NOTE_HEIGHT - sy;
         const nw = n.durationTicks * SNAP_WIDTH;
         if (nx + nw < 0 || nx > w || ny + NOTE_HEIGHT < 0 || ny > h) continue;
@@ -521,8 +686,8 @@ function renderGrid() {
             gridCtx.restore();
         }
 
-        // Automation overlay line inside note
-        if (overlayEvents) {
+        // Automation overlay line inside note (skip inner pitch polyline when overlay is pitch bend)
+        if (overlayEvents && state.automationOverlay !== 'pitchBend') {
             const evts = overlayEvents[n.channel];
             const pad = 2;
             const innerLeft = nx + pad;
@@ -581,6 +746,11 @@ function renderGrid() {
                 gridCtx.stroke();
                 gridCtx.restore();
             }
+        }
+
+        if (pbRollH) {
+            drawPitchBendHorizontalNoteRibbon(gridCtx, n, nx, nw, row, sy);
+            drawPitchBendHorizontalHandles(gridCtx, n, nx, nw, row, sy);
         }
 
         if (selected) {
