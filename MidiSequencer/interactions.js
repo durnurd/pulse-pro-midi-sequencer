@@ -187,6 +187,11 @@ function beginNoteEdit(h, x, y, e) {
         state.mode = 'moving'; state.interactionNote = h.note;
         state.interactionData = { startMouseX: x, startMouseY: y, origPositions: new Map(), lockedAxis: null, lastPreviewNote: h.note.note };
         for (const id of state.selectedNoteIds) { const n = state.notes.find(nn => nn.id === id); if (n) state.interactionData.origPositions.set(id, { startTick: n.startTick, note: n.note }); }
+        const pbPay = buildPitchBendMovePayload(state.interactionData.origPositions);
+        if (pbPay) {
+            state.interactionData.pbMoveSnapshot = pbPay.snapshot;
+            state.interactionData.pbMoveOwner = pbPay.owner;
+        }
         canvas.style.cursor = 'move'; audioEngine.noteOn(h.note.note, h.note.channel); updateHighlightedKeys();
     }
 }
@@ -336,6 +341,107 @@ canvas.addEventListener('mousedown', function(e) {
     renderAll();
 });
 
+/** When pitch bend note mode is on, capture pitch-bend events under selected notes for live tick shifts during move. */
+function buildPitchBendMovePayload(origPositions) {
+    if (!state.pitchBendNoteMode || !origPositions || origPositions.size === 0) return null;
+    const owner = new Map();
+    for (const [id, orig] of origPositions) {
+        const n = state.notes.find(nn => nn.id === id);
+        if (!n) continue;
+        const t0 = orig.startTick | 0;
+        const dur = n.durationTicks | 0;
+        const tEnd = t0 + dur; // [t0, tEnd) interior; restore event sits at tEnd (see ensurePitchRestoreAfterNote)
+        const ch = n.channel | 0;
+        for (const e of state.pitchBends) {
+            const ec = e.channel | 0;
+            if (ec !== ch) continue;
+            const et = e.tick | 0;
+            const inSpan = (et >= t0 && et < tEnd) || et === tEnd;
+            if (!inSpan) continue;
+            const k = ec + ':' + et;
+            if (!owner.has(k)) owner.set(k, id);
+        }
+    }
+    return {
+        snapshot: state.pitchBends.map(e => ({ tick: e.tick | 0, channel: e.channel | 0, value: e.value | 0 })),
+        owner,
+    };
+}
+
+/** Rebuild state.pitchBends from mousedown snapshot, shifting ticks for bends owned by moved notes. */
+function applyPitchBendsAfterNoteMove(d) {
+    if (!d.pbMoveSnapshot) return;
+    const snap = d.pbMoveSnapshot;
+    const owner = d.pbMoveOwner;
+    const out = snap.map(function(e) {
+        const k = (e.channel | 0) + ':' + (e.tick | 0);
+        if (!owner || !owner.has(k)) {
+            return { tick: e.tick | 0, channel: e.channel | 0, value: e.value | 0 };
+        }
+        const nid = owner.get(k);
+        const orig = d.origPositions.get(nid);
+        const n = state.notes.find(nn => nn.id === nid);
+        if (!orig || !n) {
+            return { tick: e.tick | 0, channel: e.channel | 0, value: e.value | 0 };
+        }
+        const dt = (n.startTick | 0) - (orig.startTick | 0);
+        return { tick: Math.max(0, (e.tick | 0) + dt), channel: e.channel | 0, value: e.value | 0 };
+    });
+    out.sort((a, b) => a.tick - b.tick || a.channel - b.channel);
+    state.pitchBends = out;
+}
+
+/**
+ * After a pitch-bend-aware move, remove stray pitch bends inside each moved note's new time span
+ * on that channel that were not produced from the moved snapshot (e.g. different tick resolution).
+ */
+function discardLeftoverPitchBendsAfterMoveComplete(d) {
+    if (!d.pbMoveSnapshot || !d.pbMoveOwner || !d.origPositions) return;
+    const snap = d.pbMoveSnapshot;
+    const owner = d.pbMoveOwner;
+    const expectedCounts = new Map();
+    for (let i = 0; i < snap.length; i++) {
+        const e = snap[i];
+        const kOrig = (e.channel | 0) + ':' + (e.tick | 0);
+        if (!owner.has(kOrig)) continue;
+        const nid = owner.get(kOrig);
+        const orig = d.origPositions.get(nid);
+        const n = state.notes.find(nn => nn.id === nid);
+        if (!orig || !n) continue;
+        const dt = (n.startTick | 0) - (orig.startTick | 0);
+        const newTick = Math.max(0, (e.tick | 0) + dt);
+        const ec = e.channel | 0;
+        const ev = e.value | 0;
+        const key3 = ec + ':' + newTick + ':' + ev;
+        expectedCounts.set(key3, (expectedCounts.get(key3) || 0) + 1);
+    }
+    function tickInsideMovedNoteSpan(ec, et) {
+        for (const id of d.origPositions.keys()) {
+            const n = state.notes.find(nn => nn.id === id);
+            if (!n) continue;
+            if ((n.channel | 0) !== (ec | 0)) continue;
+            const t0 = n.startTick | 0;
+            const tEnd = t0 + (n.durationTicks | 0);
+            if ((et >= t0 && et < tEnd) || et === tEnd) return true;
+        }
+        return false;
+    }
+    state.pitchBends = state.pitchBends.filter(function(e) {
+        const ec = e.channel | 0;
+        const et = e.tick | 0;
+        const ev = e.value | 0;
+        const key3 = ec + ':' + et + ':' + ev;
+        const need = expectedCounts.get(key3) || 0;
+        if (need > 0) {
+            expectedCounts.set(key3, need - 1);
+            return true;
+        }
+        if (tickInsideMovedNoteSpan(ec, et)) return false;
+        return true;
+    });
+    state.pitchBends.sort((a, b) => a.tick - b.tick || a.channel - b.channel);
+}
+
 // Move drag: free X+Y by default; hold Shift to lock to horizontal or vertical (dominant axis after 5px).
 // While Shift-locked, the suppressed axis stays at mousedown values (orig), not the in-progress drag position.
 // Alt bypasses key-signature pitch snap while dragging (Shift is reserved for axis lock).
@@ -394,6 +500,9 @@ function moveDrag(gx, gy, shiftHeld, altHeld) {
         if (dialogFeature && typeof window.pulseProFoolsShowUpgradeDialog === 'function') {
             window.pulseProFoolsShowUpgradeDialog(dialogFeature);
         }
+    }
+    if (d.pbMoveSnapshot) {
+        applyPitchBendsAfterNoteMove(d);
     }
     const mn = state.interactionNote;
     if (mn.note !== d.lastPreviewNote) {
@@ -533,10 +642,19 @@ document.addEventListener('mouseup', function(e) {
         state.highlightedKeys.clear();
         state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default'; renderAll();
     } else if (state.mode === 'moving') {
+        const dMove = state.interactionData;
+        const hadPbMove = !!(dMove && dMove.pbMoveSnapshot);
         if (state.interactionNote) { audioEngine.noteOff(state.interactionNote.note, state.interactionNote.channel); if (state.interactionData && state.interactionData.lastPreviewNote !== undefined) audioEngine.noteOff(state.interactionData.lastPreviewNote, state.interactionNote.channel); }
         finalizeVelocity();
         state.highlightedKeys.clear();
-        state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default'; renderAll();
+        if (hadPbMove && dMove) {
+            discardLeftoverPitchBendsAfterMoveComplete(dMove);
+        }
+        state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default';
+        if (hadPbMove && typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
+            window.playbackResyncAutomationIndicesAfterRecord();
+        }
+        renderAll();
     } else if (state.mode === 'pb-drag-left' || state.mode === 'pb-drag-right' || state.mode === 'pb-drag-center') {
         if (state.interactionNote) {
             audioEngine.noteOff(state.interactionNote.note, state.interactionNote.channel);
