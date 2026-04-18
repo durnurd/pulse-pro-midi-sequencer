@@ -1,4 +1,4 @@
-// pitch-bend-note-tool.js — Piano-roll pitch bend when automation overlay is Pitch bend (Pointer/Pencil).
+// pitch-bend-note-tool.js — Piano-roll pitch bend on notes when pitch bend mode is on (Pointer/Pencil).
 
 /** Full pitch wheel (0–16383) maps to this many semitones up/down from center for edit + display. */
 const PB_EDIT_SEMITONE_RANGE = 2;
@@ -10,8 +10,14 @@ const PITCH_BEND_CENTER_HANDLE_R = 9;
 const PB_DENSE_MIN = 128;
 const PB_DENSE_MAX = 512;
 
+/** True when piano-roll pitch bend on notes is active (overlay Pitch bend selected, or synced from Edit ▸ Mode). */
+function isPitchBendNoteToolActive() {
+    return !!state.pitchBendNoteMode;
+}
+
+/** @deprecated Use isPitchBendNoteToolActive; kept for callers that still use the old name. */
 function isPitchBendOverlay() {
-    return state.automationOverlay === 'pitchBend';
+    return isPitchBendNoteToolActive();
 }
 
 /**
@@ -159,7 +165,7 @@ function getNoteAtPitchBendVisual(gx, gy) {
  * @returns {{ type: string, note: object } | null}
  */
 function pitchBendHandleHitTest(gx, gy) {
-    if (!isPitchBendOverlay()) return null;
+    if (!isPitchBendNoteToolActive()) return null;
     if (state.activeTool !== 'cursor' && state.activeTool !== 'pencil') return null;
     const note = getNoteAtPitchBendVisual(gx, gy);
     if (!note) return null;
@@ -200,7 +206,7 @@ function pitchBendHandleHitTest(gx, gy) {
  * @returns {{ type: string, note: object } | null}
  */
 function pitchBendHandleHitTestVerticalCanvas(lx, ly) {
-    if (!isPitchBendOverlay()) return null;
+    if (!isPitchBendNoteToolActive()) return null;
     if (state.activeTool !== 'cursor' && state.activeTool !== 'pencil') return null;
     const pb = state.playbackTick;
     const seamY = state.gridHeight - 1;
@@ -246,7 +252,7 @@ function pitchBendHandleHitTestVerticalCanvas(lx, ly) {
 }
 
 function pitchBendHandleHitTestUnified(lx, ly) {
-    if (!isPitchBendOverlay()) return null;
+    if (!isPitchBendNoteToolActive()) return null;
     if (state.activeTool !== 'cursor' && state.activeTool !== 'pencil') return null;
     if (state.verticalPianoRoll) return pitchBendHandleHitTestVerticalCanvas(lx, ly);
     return pitchBendHandleHitTest(lx + state.scrollX, ly + state.scrollY);
@@ -511,6 +517,7 @@ function placementDyToSnappedValue14(dyPx) {
     return value14FromSemitones(snapped);
 }
 
+window.isPitchBendNoteToolActive = isPitchBendNoteToolActive;
 window.isPitchBendOverlay = isPitchBendOverlay;
 window.pitchBendCenterHandleTimeFractionForNote = pitchBendCenterHandleTimeFractionForNote;
 window.pitchBendCenterHandleAnchorTick = pitchBendCenterHandleAnchorTick;

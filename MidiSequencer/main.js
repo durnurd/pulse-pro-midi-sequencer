@@ -1220,6 +1220,7 @@
         if (!wasOpen) {
             editDropdown.parentElement.classList.add('show');
             updateEditMenuUndoRedoLabels();
+            if (typeof window.updateEditModeMenuChecks === 'function') window.updateEditModeMenuChecks();
         }
     });
 
@@ -1229,6 +1230,7 @@
             editDropdown.parentElement.classList.add('show');
         }
         updateEditMenuUndoRedoLabels();
+        if (typeof window.updateEditModeMenuChecks === 'function') window.updateEditModeMenuChecks();
     });
 
     function updateVerticalRollMenuCheck() {
@@ -1615,6 +1617,55 @@
         for (const n of state.notes) state.selectedNoteIds.add(n.id);
         renderAll();
     });
+
+    function updateEditModeMenuChecks() {
+        const cur = state.activeTool;
+        const cCsr = document.getElementById('mode-check-cursor');
+        const cPen = document.getElementById('mode-check-pencil');
+        const cErs = document.getElementById('mode-check-eraser');
+        const cPb = document.getElementById('mode-check-pitch-bend');
+        if (cCsr) cCsr.classList.toggle('checked', cur === 'cursor');
+        if (cPen) cPen.classList.toggle('checked', cur === 'pencil');
+        if (cErs) cErs.classList.toggle('checked', cur === 'eraser');
+        if (cPb) cPb.classList.toggle('checked', !!state.pitchBendNoteMode);
+    }
+    window.updateEditModeMenuChecks = updateEditModeMenuChecks;
+
+    const menuModeCursor = document.getElementById('menu-mode-cursor');
+    const menuModePencil = document.getElementById('menu-mode-pencil');
+    const menuModeEraser = document.getElementById('menu-mode-eraser');
+    const menuModePitchBend = document.getElementById('menu-mode-pitch-bend');
+    if (menuModeCursor) {
+        menuModeCursor.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (typeof setTool === 'function') setTool('cursor');
+            closeAllDropdowns();
+        });
+    }
+    if (menuModePencil) {
+        menuModePencil.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (typeof setTool === 'function') setTool('pencil');
+            closeAllDropdowns();
+        });
+    }
+    if (menuModeEraser) {
+        menuModeEraser.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (typeof setTool === 'function') setTool('eraser');
+            closeAllDropdowns();
+        });
+    }
+    if (menuModePitchBend) {
+        menuModePitchBend.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (typeof window.togglePitchBendNoteModeFromShortcut === 'function') {
+                window.togglePitchBendNoteModeFromShortcut();
+            }
+            closeAllDropdowns();
+        });
+    }
+
     document.getElementById('btn-edit-delete').addEventListener('click', function() {
         deleteSelection();
         renderAll();

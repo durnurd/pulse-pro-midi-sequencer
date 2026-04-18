@@ -341,6 +341,7 @@ window.setTool = function(tool) {
     state.activeTool = tool;
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('tool-' + tool).classList.add('active');
+    if (typeof window.updateEditModeMenuChecks === 'function') window.updateEditModeMenuChecks();
 };
 document.getElementById('tool-cursor').addEventListener('click', function() { setTool('cursor'); this.blur(); });
 document.getElementById('tool-pencil').addEventListener('click', function() { setTool('pencil'); this.blur(); });

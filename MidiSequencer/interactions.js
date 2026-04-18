@@ -467,7 +467,7 @@ document.addEventListener('mousemove', function(e) {
         }
         renderAll();
     }
-    else if (state.mode === 'erasing') { const h = htGrid(gx, gy); if (h.note && !state.interactionData.erasedIds.has(h.note.id)) { state.interactionData.erasedIds.add(h.note.id); removeNote(h.note.id); renderAll(); } }
+    else if (state.mode === 'erasing') { const h = htGridFromEvent(e); if (h.note && !state.interactionData.erasedIds.has(h.note.id)) { state.interactionData.erasedIds.add(h.note.id); removeNote(h.note.id); renderAll(); } }
     else if (state.mode === 'pb-drag-left' || state.mode === 'pb-drag-right') {
         pitchBendApplyHandleDragFromMouseGy(state.interactionData, gy);
         if (typeof window.playbackResyncAutomationIndicesAfterRecord === 'function') {
@@ -708,6 +708,11 @@ document.addEventListener('keydown', function(e) {
         if (e.key === 'v' || e.key === 'V') setTool('cursor');
         if (e.key === 'p' || e.key === 'P') setTool('pencil');
         if (e.key === 'e' || e.key === 'E') setTool('eraser');
+        if (e.key === 'b' || e.key === 'B') {
+            if (typeof window.togglePitchBendNoteModeFromShortcut === 'function') {
+                window.togglePitchBendNoteModeFromShortcut();
+            }
+        }
     }
     if (e.key === '1') setTool('cursor');
     if (e.key === '2') setTool('pencil');

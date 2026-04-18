@@ -349,7 +349,7 @@ function renderGridVertical() {
         const yTop = seamY - (n.startTick + n.durationTicks - pb) * SNAP_WIDTH + pan;
         const nh = yBottom - yTop;
         const nw = NOTE_HEIGHT;
-        const pbRollV = state.automationOverlay === 'pitchBend';
+        const pbRollV = !!state.pitchBendNoteMode;
         if (xLeft + nw < 0 || xLeft > w || yBottom < 0 || yTop > h) continue;
 
         const selected = state.selectedNoteIds.has(n.id);
@@ -634,7 +634,7 @@ function renderGrid() {
         if (trk && trk.hidden) continue;
         const row = TOTAL_MIDI_NOTES - 1 - n.note;
         const nx = n.startTick * SNAP_WIDTH - sx;
-        const pbRollH = state.automationOverlay === 'pitchBend';
+        const pbRollH = !!state.pitchBendNoteMode;
         const ny = row * NOTE_HEIGHT - sy;
         const nw = n.durationTicks * SNAP_WIDTH;
         if (nx + nw < 0 || nx > w || ny + NOTE_HEIGHT < 0 || ny > h) continue;
@@ -1383,6 +1383,7 @@ function setAutomationOverlayFromUi(val) {
     } else {
         state.automationOverlay = parseInt(String(val), 10);
     }
+    state.pitchBendNoteMode = (state.automationOverlay === 'pitchBend');
     const sel = document.getElementById('automation-overlay-select');
     if (sel) {
         if (state.automationOverlay === null) sel.value = '';
@@ -1394,6 +1395,16 @@ function setAutomationOverlayFromUi(val) {
 }
 window.setAutomationOverlayFromUi = setAutomationOverlayFromUi;
 
+/** Toggle pitch bend overlay + on-note pitch edit mode (same as Edit ▸ Mode ▸ Pitch bend). */
+function togglePitchBendNoteModeFromShortcut() {
+    if (state.automationOverlay === 'pitchBend') {
+        setAutomationOverlayFromUi('');
+    } else {
+        setAutomationOverlayFromUi('pitchBend');
+    }
+}
+window.togglePitchBendNoteModeFromShortcut = togglePitchBendNoteModeFromShortcut;
+
 function renderAll() {
     renderGrid();
     renderKeyboard();
@@ -1404,5 +1415,6 @@ function renderAll() {
     if (window.updatePlaybackTimeDisplay) window.updatePlaybackTimeDisplay();
     if (window.updateToolbarPlaybackTempoDisplay) window.updateToolbarPlaybackTempoDisplay();
     if (window.updateEditMenuUndoRedoLabels) window.updateEditMenuUndoRedoLabels();
+    if (window.updateEditModeMenuChecks) window.updateEditModeMenuChecks();
 }
 

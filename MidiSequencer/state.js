@@ -102,6 +102,8 @@ const state = {
 
     // Automation overlay: null = none, 'pitchBend', or a CC number (7, 10, 11, etc.)
     automationOverlay: null,
+    /** When true, piano-roll pitch bend on notes (handles, pencil ramp) is active; kept in sync with overlay === pitchBend via setAutomationOverlayFromUi. */
+    pitchBendNoteMode: false,
 
     // When true, automation editor is docked below the piano roll (full timeline width)
     automationEditorExpanded: false,

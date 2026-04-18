@@ -54,6 +54,34 @@
                         <button id="btn-edit-copy" title="Copy (Ctrl+C)">Copy <span class="menu-shortcut">Ctrl+C</span></button>
                         <button id="btn-edit-paste" title="Paste (Ctrl+V)">Paste <span class="menu-shortcut">Ctrl+V</span></button>
                         <button id="btn-edit-select-all" title="Select All (Ctrl+A)">Select All <span class="menu-shortcut">Ctrl+A</span></button>
+                        <div class="menu-submenu" id="menu-mode-wrap">
+                            <button type="button" class="menu-submenu-label" id="btn-mode-menu" title="Tool and pitch bend on-note mode" aria-haspopup="true" aria-expanded="false">
+                                Mode <span class="menu-submenu-arrow" aria-hidden="true">▶</span>
+                            </button>
+                            <div class="menu-submenu-panel" id="mode-panel" role="menu" aria-label="Editor mode">
+                                <button type="button" class="mode-menu-item" id="menu-mode-cursor" role="menuitem" title="Cursor tool">
+                                    <span class="menu-check" id="mode-check-cursor" aria-hidden="true">✓</span>
+                                    <span class="menu-action-text">Cursor</span>
+                                    <span class="menu-shortcut">1 · V</span>
+                                </button>
+                                <button type="button" class="mode-menu-item" id="menu-mode-pencil" role="menuitem" title="Pencil tool">
+                                    <span class="menu-check" id="mode-check-pencil" aria-hidden="true">✓</span>
+                                    <span class="menu-action-text">Pencil</span>
+                                    <span class="menu-shortcut">2 · P</span>
+                                </button>
+                                <button type="button" class="mode-menu-item" id="menu-mode-eraser" role="menuitem" title="Eraser tool">
+                                    <span class="menu-check" id="mode-check-eraser" aria-hidden="true">✓</span>
+                                    <span class="menu-action-text">Eraser</span>
+                                    <span class="menu-shortcut">3 · E</span>
+                                </button>
+                                <div class="menu-separator" role="separator"></div>
+                                <button type="button" class="mode-menu-item" id="menu-mode-pitch-bend" role="menuitem" title="Pitch bend overlay and on-note pitch editing">
+                                    <span class="menu-check" id="mode-check-pitch-bend" aria-hidden="true">✓</span>
+                                    <span class="menu-action-text">Pitch bend</span>
+                                    <span class="menu-shortcut">B</span>
+                                </button>
+                            </div>
+                        </div>
                         <div class="menu-separator"></div>
                         <button id="btn-edit-delete" title="Delete (Del)">Delete <span class="menu-shortcut">Del</span></button>
                     </div>

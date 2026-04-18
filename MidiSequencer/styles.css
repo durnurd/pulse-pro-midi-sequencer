@@ -352,6 +352,17 @@ select.timesig-listbox:focus {
     opacity: 0.5;
     cursor: default;
 }
+#toolbar .menu-submenu-panel button.mode-menu-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 0;
+}
+#toolbar .menu-submenu-panel button.mode-menu-item .menu-action-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+}
 
 .tool-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; }
 .tool-btn.active { background: var(--accent) !important; }
