@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>PulsePro MIDI Sequencer</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="pwa-icon.svg">
     <link rel="stylesheet" href="styles.css">
     <script type="importmap">
     {
@@ -415,6 +419,7 @@
     <script src="interactions.js"></script>
     <script src="interactions2.js"></script>
     <script src="playback.js"></script>
+    <script src="vr-gamepad-bridge.js"></script>
     <script src="export-audio.js"></script>
     <script src="midi-record.js"></script>
     <script src="midi.js"></script>
@@ -559,6 +564,30 @@
         }
 
         void setupBundledDefaultSoundFont();
+    </script>
+    <script>
+        (function () {
+            if (!('serviceWorker' in navigator)) {
+                return;
+            }
+            window.addEventListener('load', function () {
+                var pageUrl = window.location.href;
+                var swScript = new URL('sw.js', pageUrl).href;
+                var swScope = new URL('./', pageUrl).href;
+                navigator.serviceWorker.register(swScript, { scope: swScope }).catch(function (err) {
+                    var msg = err && err.message ? String(err.message) : '';
+                    if ((err && err.name === 'SecurityError') || /SSL|certificate|TLS/i.test(msg)) {
+                        console.warn(
+                            'PWA install: service worker was not registered because HTTPS is not trusted for this origin. ' +
+                            'Use a certificate the browser trusts (e.g. mkcert), import your dev CA, or open from http://localhost. ' +
+                            'The sequencer still works; only install/offline PWA features are affected.'
+                        );
+                    } else {
+                        console.warn('Service worker registration failed:', err);
+                    }
+                });
+            });
+        })();
     </script>
 </body>
 </html>

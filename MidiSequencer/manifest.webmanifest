@@ -1,0 +1,18 @@
+{
+  "name": "PulsePro MIDI Sequencer",
+  "short_name": "MIDI Seq",
+  "description": "MIDI piano-roll sequencer",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
