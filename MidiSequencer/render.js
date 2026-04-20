@@ -1313,26 +1313,32 @@ function updateScrollbars() {
 
 // Scrollbar drag handlers
 (function() {
-    let dragging = null; // { axis: 'v'|'h', startMouse, startScroll }
+    let dragging = null; // { axis, pointerId, startMouse, startScroll, startPlaybackTick }
 
-    function onMouseDown(axis, e) {
+    function onPointerDown(axis, e) {
+        if (!e.isPrimary || e.button !== 0) return;
         e.preventDefault();
         const thumb = axis === 'v' ? sbThumbV : sbThumbH;
         thumb.classList.add('active');
         dragging = {
             axis,
+            pointerId: e.pointerId,
             startMouse: axis === 'v' ? e.clientY : e.clientX,
             startScroll: axis === 'v'
                 ? (state.verticalPianoRoll ? 0 : state.scrollY)
                 : state.scrollX,
             startPlaybackTick: axis === 'v' && state.verticalPianoRoll ? state.playbackTick : undefined,
         };
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        try {
+            thumb.setPointerCapture(e.pointerId);
+        } catch (_) {}
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        document.addEventListener('pointercancel', onPointerUp);
     }
 
-    function onMouseMove(e) {
-        if (!dragging) return;
+    function onPointerMove(e) {
+        if (!dragging || e.pointerId !== dragging.pointerId) return;
         const { axis, startMouse, startScroll, startPlaybackTick } = dragging;
         const delta = (axis === 'v' ? e.clientY : e.clientX) - startMouse;
         if (axis === 'v') {
@@ -1378,21 +1384,27 @@ function updateScrollbars() {
         renderAll();
     }
 
-    function onMouseUp() {
-        if (dragging) {
-            const thumb = dragging.axis === 'v' ? sbThumbV : sbThumbH;
-            thumb.classList.remove('active');
-        }
+    function onPointerUp(e) {
+        if (!dragging || (e && e.pointerId !== dragging.pointerId)) return;
+        const thumb = dragging.axis === 'v' ? sbThumbV : sbThumbH;
+        thumb.classList.remove('active');
+        try {
+            if (thumb.hasPointerCapture(dragging.pointerId)) {
+                thumb.releasePointerCapture(dragging.pointerId);
+            }
+        } catch (_) {}
         dragging = null;
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerUp);
     }
 
-    sbThumbV.addEventListener('mousedown', function(e) { onMouseDown('v', e); });
-    sbThumbH.addEventListener('mousedown', function(e) { onMouseDown('h', e); });
+    sbThumbV.addEventListener('pointerdown', function(e) { onPointerDown('v', e); });
+    sbThumbH.addEventListener('pointerdown', function(e) { onPointerDown('h', e); });
 
     // Click on track to jump
-    sbTrackV.addEventListener('mousedown', function(e) {
+    sbTrackV.addEventListener('pointerdown', function(e) {
+        if (!e.isPrimary || e.button !== 0) return;
         if (e.target === sbThumbV) return;
         const trackH = Math.max(1, getElementContentHeight(sbTrackV));
         const rect = sbTrackV.getBoundingClientRect();
@@ -1420,7 +1432,8 @@ function updateScrollbars() {
         }
         renderAll();
     });
-    sbTrackH.addEventListener('mousedown', function(e) {
+    sbTrackH.addEventListener('pointerdown', function(e) {
+        if (!e.isPrimary || e.button !== 0) return;
         if (e.target === sbThumbH) return;
         const rect = sbTrackH.getBoundingClientRect();
         const ratio = (e.clientX - rect.left) / rect.width;

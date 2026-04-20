@@ -1,6 +1,34 @@
-// interactions.js - Grid mouse interactions
+// interactions.js - Grid pointer interactions (mouse, touch, VR laser via Pointer Events)
 (function() {
 const canvas = document.getElementById('grid-canvas');
+
+/** Active pointer id for grid drag (touch / Quest laser / pen); paired with setPointerCapture on the canvas. */
+let gridActivePointerId = null;
+
+function gridTakePointer(e) {
+    gridActivePointerId = e.pointerId;
+    try {
+        canvas.setPointerCapture(e.pointerId);
+    } catch (_) {
+        /* element removed or capture unsupported */
+    }
+}
+
+function gridReleasePointer(e) {
+    if (gridActivePointerId === null) {
+        return;
+    }
+    if (e && e.pointerId !== gridActivePointerId) {
+        return;
+    }
+    const id = gridActivePointerId;
+    gridActivePointerId = null;
+    try {
+        if (canvas.hasPointerCapture(id)) {
+            canvas.releasePointerCapture(id);
+        }
+    } catch (_) {}
+}
 
 // Custom eraser cursor (data URI)
 const ERASER_CURSOR = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\'%3E%3Crect x=\'4\' y=\'8\' width=\'16\' height=\'12\' rx=\'2\' fill=\'%23e94560\' stroke=\'%23fff\' stroke-width=\'1.5\'/%3E%3Crect x=\'4\' y=\'8\' width=\'16\' height=\'5\' rx=\'1\' fill=\'%23ff6b81\' stroke=\'%23fff\' stroke-width=\'1.5\'/%3E%3C/svg%3E") 12 16, pointer';
@@ -65,8 +93,8 @@ function foolsBlockPlacedPitchIfNeeded(midiNote) {
     return false;
 }
 
-// Hover cursor
-canvas.addEventListener('mousemove', function(e) {
+// Hover cursor (pointer covers mouse + touch + VR laser in supporting browsers)
+canvas.addEventListener('pointermove', function(e) {
     const { x, y } = gc(e);
     if (state.conductorPlacementMode && !state.conductor.locked) {
         state.conductorPlacementHoverTick = Math.max(0, snapTick(x));
@@ -196,9 +224,14 @@ function beginNoteEdit(h, x, y, e) {
     }
 }
 
-// Mousedown
-canvas.addEventListener('mousedown', function(e) {
-    audioEngine.init(); const { x, y } = gc(e); const nn = noteFromY(y);
+// Pointer down (mouse, touchscreen, Meta Quest browser laser, etc.)
+canvas.addEventListener('pointerdown', function(e) {
+    if (!e.isPrimary) {
+        return;
+    }
+    audioEngine.init();
+    const { x, y } = gc(e);
+    const nn = noteFromY(y);
     if (e.button === 2) {
         const h = htGridFromEvent(e);
         if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay()
@@ -217,7 +250,10 @@ canvas.addEventListener('mousedown', function(e) {
         if (h.note) { pushUndoState('delete note'); removeNote(h.note.id); renderAll(); }
         return;
     }
-    if (e.button !== 0) return;
+    if (e.button !== 0) {
+        return;
+    }
+    e.preventDefault();
     if (state.conductorPlacementMode && !state.conductor.locked) {
         const tick = Math.max(0, snapTick(x));
         if (typeof window.openConductorValuePrompt === 'function') window.openConductorValuePrompt(tick);
@@ -231,6 +267,7 @@ canvas.addEventListener('mousedown', function(e) {
         }
         pushUndoState('erase notes');
         state.mode = 'erasing'; state.interactionData = { erasedIds: new Set() };
+        gridTakePointer(e);
         const h = htGridFromEvent(e);
         if (h.note) { state.interactionData.erasedIds.add(h.note.id); removeNote(h.note.id); renderAll(); }
         return;
@@ -248,6 +285,7 @@ canvas.addEventListener('mousedown', function(e) {
             const gy0 = e.clientY - r0.top + state.scrollY;
             state.interactionData = pitchBendBuildHandleDragState(h.note, h.type === 'pb-handle-left' ? 'left' : 'right', gy0);
             canvas.style.cursor = 'ns-resize';
+            gridTakePointer(e);
             updateHighlightedKeys(); renderAll(); return;
         }
         if (h.type === 'pb-handle-center') {
@@ -264,10 +302,14 @@ canvas.addEventListener('mousedown', function(e) {
                 window.playbackResyncAutomationIndicesAfterRecord();
             }
             canvas.style.cursor = 'move';
+            gridTakePointer(e);
             updateHighlightedKeys(); renderAll(); return;
         }
         if (h.type !== 'empty') {
             beginNoteEdit(h, x, y, e);
+            if (state.mode !== 'idle') {
+                gridTakePointer(e);
+            }
             renderAll(); return;
         }
         // Empty space: create a new note
@@ -297,6 +339,7 @@ canvas.addEventListener('mousedown', function(e) {
             }
         }
         state.selectedNoteIds.clear(); state.selectedNoteIds.add(n.id);
+        gridTakePointer(e);
         audioEngine.noteOn(nnPlace, state.activeChannel); updateHighlightedKeys(); renderAll(); return;
     }
     // Cursor
@@ -311,6 +354,7 @@ canvas.addEventListener('mousedown', function(e) {
         const gy1 = e.clientY - r1.top + state.scrollY;
         state.interactionData = pitchBendBuildHandleDragState(h.note, h.type === 'pb-handle-left' ? 'left' : 'right', gy1);
         canvas.style.cursor = 'ns-resize';
+        gridTakePointer(e);
         updateHighlightedKeys(); renderAll(); return;
     }
     if (h.type === 'pb-handle-center') {
@@ -327,6 +371,7 @@ canvas.addEventListener('mousedown', function(e) {
             window.playbackResyncAutomationIndicesAfterRecord();
         }
         canvas.style.cursor = 'move';
+        gridTakePointer(e);
         updateHighlightedKeys(); renderAll(); return;
     }
     if (h.type !== 'empty') {
@@ -337,6 +382,9 @@ canvas.addEventListener('mousedown', function(e) {
         const priorSelection = additive ? new Set(state.selectedNoteIds) : new Set();
         if (!additive) state.selectedNoteIds.clear();
         state.mode = 'selecting'; state.interactionData = { startX: x, startY: y, currentX: x, currentY: y, priorSelection, toggleMode };
+    }
+    if (state.mode !== 'idle') {
+        gridTakePointer(e);
     }
     renderAll();
 });
@@ -513,8 +561,11 @@ function moveDrag(gx, gy, shiftHeld, altHeld) {
     renderAll();
 }
 
-// Global mousemove
-document.addEventListener('mousemove', function(e) {
+// Global pointer move (capture sends events here while dragging off-canvas)
+document.addEventListener('pointermove', function(e) {
+    if (state.mode !== 'idle' && gridActivePointerId !== null && e.pointerId !== gridActivePointerId) {
+        return;
+    }
     if (state.mode === 'idle') return;
     const r = canvas.getBoundingClientRect(), gx = e.clientX - r.left + state.scrollX, gy = e.clientY - r.top + state.scrollY;
     if (state.mode === 'placing') {
@@ -606,8 +657,14 @@ function finalizeVelocity() {
     }
 }
 
-// Mouseup
-document.addEventListener('mouseup', function(e) {
+function onGridPointerUpOrCancel(e) {
+    if (state.mode === 'idle') {
+        gridReleasePointer(e);
+        return;
+    }
+    if (gridActivePointerId !== null && e.pointerId !== gridActivePointerId) {
+        return;
+    }
     if (state.mode === 'placing') {
         if (typeof isPitchBendOverlay === 'function' && isPitchBendOverlay() && state.activeTool === 'pencil'
             && state.interactionNote && state.interactionData
@@ -667,6 +724,16 @@ document.addEventListener('mouseup', function(e) {
     } else if (state.mode === 'selecting' || state.mode === 'erasing') {
         state.mode = 'idle'; state.interactionNote = null; state.interactionData = null; canvas.style.cursor = 'default'; renderAll();
     }
+    gridReleasePointer(e);
+}
+
+document.addEventListener('pointerup', onGridPointerUpOrCancel);
+document.addEventListener('pointercancel', onGridPointerUpOrCancel);
+
+canvas.addEventListener('lostpointercapture', function(ev) {
+    if (gridActivePointerId === ev.pointerId) {
+        gridActivePointerId = null;
+    }
 });
 
 canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
@@ -721,7 +788,7 @@ function handleSequencerWheelEvent(e, mouseXInGrid, mouseYInGrid) {
         state.scrollY = Math.max(0, Math.min(TOTAL_HEIGHT - state.gridHeight, state.scrollY + (e.shiftKey ? 0 : e.deltaY)));
     }
     renderAll();
-}
+}  
 window.handleSequencerWheelEvent = handleSequencerWheelEvent;
 
 canvas.addEventListener('wheel', function(e) {

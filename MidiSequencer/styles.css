@@ -897,7 +897,7 @@ select.timesig-listbox:focus {
 #automation-editor-canvas-wrap {
     flex: 1; overflow: hidden; position: relative; cursor: crosshair;
 }
-#automation-editor-canvas { display: block; }
+#automation-editor-canvas { display: block; touch-action: none; }
 
 #automation-overlay-panel {
     padding: 8px;
@@ -1134,18 +1134,18 @@ select.timesig-listbox:focus {
     border-right: 1px solid var(--toolbar-border);
     background: var(--toolbar-bg);
 }
-#keyboard-panel canvas { display: block; cursor: pointer; }
+#keyboard-panel canvas { display: block; cursor: pointer; touch-action: none; }
 #grid-panel {
     overflow: hidden;
     position: relative;
     background: var(--bg);
 }
-#grid-panel canvas { display: block; }
+#grid-panel canvas { display: block; touch-action: none; }
 #sb-spacer-bl { background: var(--toolbar-bg); border-right: 1px solid var(--toolbar-border); }
 #sb-spacer-br { background: var(--toolbar-bg); }
 
 /* Scrollbars */
-.scrollbar-track { background: var(--toolbar-bg); position: relative; }
+.scrollbar-track { background: var(--toolbar-bg); position: relative; touch-action: none; }
 .scrollbar-vertical { border-left: 1px solid var(--toolbar-border); }
 .scrollbar-horizontal { border-top: 1px solid var(--toolbar-border); }
 .scrollbar-thumb {

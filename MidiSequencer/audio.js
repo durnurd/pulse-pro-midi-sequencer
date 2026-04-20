@@ -35,13 +35,33 @@ class AudioEngine {
 
     async init() {
         if (this._initPromise) return this._initPromise;
-        this._initPromise = this._doInit();
+        this._initPromise = this._doInit().catch((err) => {
+            this._initPromise = null;
+            if (this.ctx) {
+                try {
+                    void this.ctx.close();
+                } catch (_) {
+                    /* ignore */
+                }
+                this.ctx = null;
+            }
+            throw err;
+        });
         return this._initPromise;
     }
 
     async _doInit() {
         if (this.ctx) return;
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Browsers gate AudioWorklet to secure contexts (https, localhost, etc.); plain http://<LAN-IP> is not secure.
+        if (!this.ctx.audioWorklet) {
+            throw new Error(
+                'AudioWorklet is unavailable: this page is not a secure context. ' +
+                'Serve the app over HTTPS (or open via http://127.0.0.1 on this PC only). ' +
+                'http://<LAN-address> works for static files but not for this synthesizer in Chrome.'
+            );
+        }
 
         // Load the SpessaSynth worklet processor from CDN
         const processorURL = 'https://cdn.jsdelivr.net/npm/spessasynth_lib@4.2.2/dist/spessasynth_processor.min.js';
@@ -78,12 +98,13 @@ class AudioEngine {
 
     // Load a SoundFont file by URL. Returns true if the font was applied, false on failure.
     async loadSoundFont(url, id) {
-        await this.init();
         const indicator = document.getElementById('sf-loading-indicator');
         if (indicator) indicator.style.display = 'inline';
 
         try {
-            const response = await fetch(url);
+            await this.init();
+            // Avoid serving a stale cached 404 after MIME/IIS fixes (address bar often bypasses cache).
+            const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
             if (!response.ok) {
                 throw new Error(`SoundFont HTTP ${response.status} for ${url}`);
             }
@@ -100,11 +121,11 @@ class AudioEngine {
 
     // Load a SoundFont from an ArrayBuffer directly (e.g. from File API). Returns true on success, false on failure.
     async loadSoundFontFromBuffer(buffer, id) {
-        await this.init();
         const indicator = document.getElementById('sf-loading-indicator');
         if (indicator) indicator.style.display = 'inline';
 
         try {
+            await this.init();
             await this._applySoundFontBuffer(buffer, id);
             return true;
         } catch (err) {

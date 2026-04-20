@@ -1,8 +1,62 @@
-// interactions2.js - Keyboard panel, playback header, tool switching
+// interactions2.js - Keyboard / playback header pointer interactions and tool switching
 (function() {
 const kc = document.getElementById('keyboard-canvas');
 const pb = document.getElementById('playback-canvas');
 let pbDrag = false, kcDragging = false, kcLastNote = -1;
+let kcActivePointerId = null;
+let pbActivePointerId = null;
+
+function kcReleasePointer(e) {
+    if (kcActivePointerId === null) {
+        return;
+    }
+    if (e && e.pointerId !== kcActivePointerId) {
+        return;
+    }
+    const id = kcActivePointerId;
+    kcActivePointerId = null;
+    try {
+        if (kc.hasPointerCapture(id)) {
+            kc.releasePointerCapture(id);
+        }
+    } catch (_) {}
+}
+
+function pbTakePointer(e) {
+    pbActivePointerId = e.pointerId;
+    try {
+        pb.setPointerCapture(e.pointerId);
+    } catch (_) {}
+}
+
+function pbReleasePointer(e) {
+    if (pbActivePointerId === null) {
+        return;
+    }
+    if (e && e.pointerId !== pbActivePointerId) {
+        return;
+    }
+    const id = pbActivePointerId;
+    pbActivePointerId = null;
+    try {
+        if (pb.hasPointerCapture(id)) {
+            pb.releasePointerCapture(id);
+        }
+    } catch (_) {}
+}
+
+function pbForceReleasePointer() {
+    const id = pbActivePointerId;
+    pbActivePointerId = null;
+    if (id == null) {
+        return;
+    }
+    try {
+        if (pb.hasPointerCapture(id)) {
+            pb.releasePointerCapture(id);
+        }
+    } catch (_) {}
+}
 /** @type {null | { kind: string, origTick: number, bpm?: number, numerator?: number, denominator?: number, semitones?: number, hitChannel?: number, startClientX: number, startClientY: number, moved: boolean }} */
 let conductorPbDrag = null;
 function noteFromY(gy) { return TOTAL_MIDI_NOTES - 1 - Math.floor(gy / NOTE_HEIGHT); }
@@ -10,9 +64,16 @@ function noteFromKeyboardStripLocalX(lx) {
     return Math.max(0, Math.min(TOTAL_MIDI_NOTES - 1, Math.floor((lx + state.scrollX) / NOTE_HEIGHT)));
 }
 
-// --- Keyboard panel: click and drag to preview notes ---
-kc.addEventListener('mousedown', function(e) {
+// --- Keyboard panel: pointer down / drag / up (touch, VR laser, mouse)
+kc.addEventListener('pointerdown', function(e) {
+    if (!e.isPrimary) {
+        return;
+    }
     audioEngine.init();
+    if (e.button !== 0) {
+        return;
+    }
+    e.preventDefault();
     const r = kc.getBoundingClientRect();
     const nn = state.verticalPianoRoll
         ? noteFromKeyboardStripLocalX(e.clientX - r.left)
@@ -28,6 +89,10 @@ kc.addEventListener('mousedown', function(e) {
         return;
     }
     kcDragging = true;
+    kcActivePointerId = e.pointerId;
+    try {
+        kc.setPointerCapture(e.pointerId);
+    } catch (_) {}
     kcLastNote = nn;
     audioEngine.noteOn(nn, state.activeChannel);
     if (typeof window.pulseProMidiOutNoteOn === 'function') {
@@ -35,8 +100,9 @@ kc.addEventListener('mousedown', function(e) {
     }
     state.highlightedKeys.clear(); state.highlightedKeys.add(nn); renderAll();
 });
-document.addEventListener('mousemove', function(e) {
+document.addEventListener('pointermove', function(e) {
     if (!kcDragging) return;
+    if (kcActivePointerId !== null && e.pointerId !== kcActivePointerId) return;
     const r = kc.getBoundingClientRect();
     const nn = state.verticalPianoRoll
         ? noteFromKeyboardStripLocalX(e.clientX - r.left)
@@ -82,17 +148,32 @@ document.addEventListener('mousemove', function(e) {
     }
     state.highlightedKeys.clear(); state.highlightedKeys.add(nn); renderAll();
 });
-document.addEventListener('mouseup', function(e) {
-    if (kcDragging) {
-        kcDragging = false;
-        if (kcLastNote >= 0) {
-            audioEngine.noteOff(kcLastNote, state.activeChannel);
-            if (typeof window.pulseProMidiOutNoteOff === 'function') {
-                window.pulseProMidiOutNoteOff(kcLastNote, state.activeChannel);
-            }
-            kcLastNote = -1;
+function onKcPointerUpOrCancel(e) {
+    if (!kcDragging) {
+        kcReleasePointer(e);
+        return;
+    }
+    if (kcActivePointerId !== null && e.pointerId !== kcActivePointerId) {
+        return;
+    }
+    kcDragging = false;
+    kcReleasePointer(e);
+    if (kcLastNote >= 0) {
+        audioEngine.noteOff(kcLastNote, state.activeChannel);
+        if (typeof window.pulseProMidiOutNoteOff === 'function') {
+            window.pulseProMidiOutNoteOff(kcLastNote, state.activeChannel);
         }
-        state.highlightedKeys.clear(); renderAll();
+        kcLastNote = -1;
+    }
+    state.highlightedKeys.clear(); renderAll();
+}
+
+document.addEventListener('pointerup', onKcPointerUpOrCancel);
+document.addEventListener('pointercancel', onKcPointerUpOrCancel);
+
+kc.addEventListener('lostpointercapture', function(ev) {
+    if (kcActivePointerId === ev.pointerId) {
+        kcActivePointerId = null;
     }
 });
 kc.addEventListener('wheel', function(e) {
@@ -138,7 +219,7 @@ function syncPlayheadPreviewNotes() {
         window.pulseProSyncPlayheadPreviewNotes();
     }
 }
-pb.addEventListener('mousemove', function(e) {
+pb.addEventListener('pointermove', function(e) {
     if (!state.conductorPlacementMode || state.conductor.locked) return;
     const r = pb.getBoundingClientRect();
     if (state.verticalPianoRoll) {
@@ -151,7 +232,10 @@ pb.addEventListener('mousemove', function(e) {
     renderAll();
 });
 
-pb.addEventListener('mousedown', function(e) {
+pb.addEventListener('pointerdown', function(e) {
+    if (!e.isPrimary) {
+        return;
+    }
     audioEngine.init();
     const r = pb.getBoundingClientRect();
     const localX = e.clientX - r.left;
@@ -186,6 +270,7 @@ pb.addEventListener('mousedown', function(e) {
         if (typeof window.getSelection === 'function') window.getSelection().removeAllRanges();
         if (state.verticalPianoRoll) return;
         pbDrag = true;
+        pbTakePointer(e);
         if (state.isPlaying) stopPlayback();
         setPbTick(e);
         syncPlayheadPreviewNotes();
@@ -194,6 +279,7 @@ pb.addEventListener('mousedown', function(e) {
     }
 
     if (e.button !== 0) return;
+    e.preventDefault();
 
     if (state.conductorPlacementMode && !state.conductor.locked) {
         e.preventDefault();
@@ -222,6 +308,7 @@ pb.addEventListener('mousedown', function(e) {
                         moved: false,
                     };
                     state.conductorMarkerDragPreview = { kind: 'bpm', origTick: hit.tick, previewTick: hit.tick };
+                    pbTakePointer(e);
                     renderAll();
                     return;
                 }
@@ -239,6 +326,7 @@ pb.addEventListener('mousedown', function(e) {
                         moved: false,
                     };
                     state.conductorMarkerDragPreview = { kind: 'ts', origTick: hit.tick, previewTick: hit.tick };
+                    pbTakePointer(e);
                     renderAll();
                     return;
                 }
@@ -265,6 +353,7 @@ pb.addEventListener('mousedown', function(e) {
                         previewTick: hit.tick,
                         semitones: ev.semitones,
                     };
+                    pbTakePointer(e);
                     renderAll();
                     return;
                 }
@@ -276,13 +365,17 @@ pb.addEventListener('mousedown', function(e) {
     if (typeof window.getSelection === 'function') window.getSelection().removeAllRanges();
     if (state.verticalPianoRoll) return;
     pbDrag = true;
+    pbTakePointer(e);
     if (state.isPlaying) stopPlayback();
     setPbTick(e);
     syncPlayheadPreviewNotes();
     renderAll();
 });
 pb.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-document.addEventListener('mousemove', function(e) {
+document.addEventListener('pointermove', function(e) {
+    if ((conductorPbDrag || pbDrag) && pbActivePointerId !== null && e.pointerId !== pbActivePointerId) {
+        return;
+    }
     if (conductorPbDrag) {
         e.preventDefault();
         const r = pb.getBoundingClientRect();
@@ -316,7 +409,14 @@ document.addEventListener('mousemove', function(e) {
     syncPlayheadPreviewNotes();
     renderAll();
 });
-document.addEventListener('mouseup', function(e) {
+function onPbPointerUpOrCancel(e) {
+    if (!conductorPbDrag && !pbDrag) {
+        pbReleasePointer(e);
+        return;
+    }
+    if (pbActivePointerId !== null && e.pointerId !== pbActivePointerId) {
+        return;
+    }
     if (conductorPbDrag) {
         const d = conductorPbDrag;
         const preview = state.conductorMarkerDragPreview;
@@ -380,6 +480,7 @@ document.addEventListener('mouseup', function(e) {
             }
         }
         renderAll();
+        pbReleasePointer(e);
         return;
     }
     if (pbDrag) {
@@ -391,7 +492,18 @@ document.addEventListener('mouseup', function(e) {
         }
         state.playbackStartTick = state.playbackTick; renderAll();
     }
+    pbReleasePointer(e);
+}
+
+document.addEventListener('pointerup', onPbPointerUpOrCancel);
+document.addEventListener('pointercancel', onPbPointerUpOrCancel);
+
+pb.addEventListener('lostpointercapture', function(ev) {
+    if (pbActivePointerId === ev.pointerId) {
+        pbActivePointerId = null;
+    }
 });
+
 pb.addEventListener('wheel', function(e) {
     e.preventDefault();
     const r = pb.getBoundingClientRect();
@@ -433,6 +545,7 @@ window.cancelConductorHeaderInteraction = function() {
     if (conductorPbDrag) {
         conductorPbDrag = null;
         state.conductorMarkerDragPreview = null;
+        pbForceReleasePointer();
         renderAll();
     }
 };
