@@ -1315,8 +1315,12 @@ function updateScrollbars() {
 (function() {
     let dragging = null; // { axis, pointerId, startMouse, startScroll, startPlaybackTick }
 
+    function isAuxiliaryMousePointer(e) {
+        return e.pointerType === 'mouse' && !e.isPrimary;
+    }
+
     function onPointerDown(axis, e) {
-        if (!e.isPrimary || e.button !== 0) return;
+        if (isAuxiliaryMousePointer(e) || e.button !== 0) return;
         e.preventDefault();
         const thumb = axis === 'v' ? sbThumbV : sbThumbH;
         thumb.classList.add('active');
@@ -1402,9 +1406,16 @@ function updateScrollbars() {
     sbThumbV.addEventListener('pointerdown', function(e) { onPointerDown('v', e); });
     sbThumbH.addEventListener('pointerdown', function(e) { onPointerDown('h', e); });
 
+    function onThumbLostCapture(e) {
+        if (!dragging || e.pointerId !== dragging.pointerId) return;
+        onPointerUp(e);
+    }
+    sbThumbV.addEventListener('lostpointercapture', onThumbLostCapture);
+    sbThumbH.addEventListener('lostpointercapture', onThumbLostCapture);
+
     // Click on track to jump
     sbTrackV.addEventListener('pointerdown', function(e) {
-        if (!e.isPrimary || e.button !== 0) return;
+        if (isAuxiliaryMousePointer(e) || e.button !== 0) return;
         if (e.target === sbThumbV) return;
         const trackH = Math.max(1, getElementContentHeight(sbTrackV));
         const rect = sbTrackV.getBoundingClientRect();
@@ -1433,7 +1444,7 @@ function updateScrollbars() {
         renderAll();
     });
     sbTrackH.addEventListener('pointerdown', function(e) {
-        if (!e.isPrimary || e.button !== 0) return;
+        if (isAuxiliaryMousePointer(e) || e.button !== 0) return;
         if (e.target === sbThumbH) return;
         const rect = sbTrackH.getBoundingClientRect();
         const ratio = (e.clientX - rect.left) / rect.width;

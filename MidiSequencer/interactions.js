@@ -2,6 +2,11 @@
 (function() {
 const canvas = document.getElementById('grid-canvas');
 
+/** True for secondary mouse buttons only — VR/touch often use non-primary pointers that must still hit-test. */
+function isAuxiliaryMousePointer(e) {
+    return e.pointerType === 'mouse' && !e.isPrimary;
+}
+
 /** Active pointer id for grid drag (touch / Quest laser / pen); paired with setPointerCapture on the canvas. */
 let gridActivePointerId = null;
 
@@ -18,7 +23,7 @@ function gridReleasePointer(e) {
     if (gridActivePointerId === null) {
         return;
     }
-    if (e && e.pointerId !== gridActivePointerId) {
+    if (e != null && e.pointerId !== gridActivePointerId) {
         return;
     }
     const id = gridActivePointerId;
@@ -226,10 +231,13 @@ function beginNoteEdit(h, x, y, e) {
 
 // Pointer down (mouse, touchscreen, Meta Quest browser laser, etc.)
 canvas.addEventListener('pointerdown', function(e) {
-    if (!e.isPrimary) {
+    if (isAuxiliaryMousePointer(e)) {
         return;
     }
     audioEngine.init();
+    if (state.mode === 'idle') {
+        gridReleasePointer(null);
+    }
     const { x, y } = gc(e);
     const nn = noteFromY(y);
     if (e.button === 2) {
@@ -731,9 +739,7 @@ document.addEventListener('pointerup', onGridPointerUpOrCancel);
 document.addEventListener('pointercancel', onGridPointerUpOrCancel);
 
 canvas.addEventListener('lostpointercapture', function(ev) {
-    if (gridActivePointerId === ev.pointerId) {
-        gridActivePointerId = null;
-    }
+    onGridPointerUpOrCancel(ev);
 });
 
 canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
@@ -798,8 +804,21 @@ canvas.addEventListener('wheel', function(e) {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+    const keyLower = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && keyLower === 'f') {
+        e.preventDefault();
+        if (typeof window.setSequencerFocusMode === 'function') {
+            window.setSequencerFocusMode(!state.sequencerFocusMode);
+        }
+        return;
+    }
     if (e.key === 'Escape') {
+        if (state.sequencerFocusMode && typeof window.setSequencerFocusMode === 'function') {
+            e.preventDefault();
+            window.setSequencerFocusMode(false);
+            return;
+        }
         if (state.conductorPlacementMode) {
             e.preventDefault();
             if (typeof window.cancelConductorInsertUi === 'function') window.cancelConductorInsertUi();
@@ -902,7 +921,7 @@ document.addEventListener('keydown', function(e) {
     if (e.key === '1') setTool('cursor');
     if (e.key === '2') setTool('pencil');
     if (e.key === '3') setTool('eraser');
-    const key = e.key.toLowerCase();
+    const key = keyLower;
     if ((e.ctrlKey || e.metaKey) && key === 'z' && e.shiftKey) { e.preventDefault(); redo(); }
     else if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); undo(); }
     if ((e.ctrlKey || e.metaKey) && key === 'y') { e.preventDefault(); redo(); }

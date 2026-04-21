@@ -6,6 +6,8 @@ const state = {
 
     /** Piano roll timeline runs bottom→top; keyboard strip along bottom; playhead on grid bottom edge. */
     verticalPianoRoll: false,
+    /** When true, toolbar and channel list are hidden; only grid, keyboard, and scrollbars remain (View menu / Ctrl+Shift+F). */
+    sequencerFocusMode: false,
     /** Vertical layout: Y offset (px) so user can browse time while paused; zeroed during playback. */
     verticalTimePanPx: 0,
     /** Vertical layout: horizontal scroll for playback header (time axis); grid pitch uses scrollX. */

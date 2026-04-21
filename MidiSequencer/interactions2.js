@@ -6,11 +6,15 @@ let pbDrag = false, kcDragging = false, kcLastNote = -1;
 let kcActivePointerId = null;
 let pbActivePointerId = null;
 
+function isAuxiliaryMousePointer(e) {
+    return e.pointerType === 'mouse' && !e.isPrimary;
+}
+
 function kcReleasePointer(e) {
     if (kcActivePointerId === null) {
         return;
     }
-    if (e && e.pointerId !== kcActivePointerId) {
+    if (e != null && e.pointerId !== kcActivePointerId) {
         return;
     }
     const id = kcActivePointerId;
@@ -33,7 +37,7 @@ function pbReleasePointer(e) {
     if (pbActivePointerId === null) {
         return;
     }
-    if (e && e.pointerId !== pbActivePointerId) {
+    if (e != null && e.pointerId !== pbActivePointerId) {
         return;
     }
     const id = pbActivePointerId;
@@ -66,10 +70,13 @@ function noteFromKeyboardStripLocalX(lx) {
 
 // --- Keyboard panel: pointer down / drag / up (touch, VR laser, mouse)
 kc.addEventListener('pointerdown', function(e) {
-    if (!e.isPrimary) {
+    if (isAuxiliaryMousePointer(e)) {
         return;
     }
     audioEngine.init();
+    if (!kcDragging) {
+        kcReleasePointer(null);
+    }
     if (e.button !== 0) {
         return;
     }
@@ -172,9 +179,7 @@ document.addEventListener('pointerup', onKcPointerUpOrCancel);
 document.addEventListener('pointercancel', onKcPointerUpOrCancel);
 
 kc.addEventListener('lostpointercapture', function(ev) {
-    if (kcActivePointerId === ev.pointerId) {
-        kcActivePointerId = null;
-    }
+    onKcPointerUpOrCancel(ev);
 });
 kc.addEventListener('wheel', function(e) {
     e.preventDefault();
@@ -233,10 +238,13 @@ pb.addEventListener('pointermove', function(e) {
 });
 
 pb.addEventListener('pointerdown', function(e) {
-    if (!e.isPrimary) {
+    if (isAuxiliaryMousePointer(e)) {
         return;
     }
     audioEngine.init();
+    if (!conductorPbDrag && !pbDrag) {
+        pbReleasePointer(null);
+    }
     const r = pb.getBoundingClientRect();
     const localX = e.clientX - r.left;
     const localY = e.clientY - r.top;
@@ -499,9 +507,7 @@ document.addEventListener('pointerup', onPbPointerUpOrCancel);
 document.addEventListener('pointercancel', onPbPointerUpOrCancel);
 
 pb.addEventListener('lostpointercapture', function(ev) {
-    if (pbActivePointerId === ev.pointerId) {
-        pbActivePointerId = null;
-    }
+    onPbPointerUpOrCancel(ev);
 });
 
 pb.addEventListener('wheel', function(e) {

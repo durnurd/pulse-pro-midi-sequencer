@@ -1261,6 +1261,12 @@
         el.classList.toggle('checked', !!state.midiKeyboardMonitor);
     }
 
+    function updateSequencerFocusMenuCheck() {
+        const el = document.getElementById('sequencer-focus-check');
+        if (!el) return;
+        el.classList.toggle('checked', !!state.sequencerFocusMode);
+    }
+
     function populateKeySignaturePanel() {
         const panel = document.getElementById('key-signature-panel');
         if (!panel || panel.dataset.pulseproPopulated) return;
@@ -1369,6 +1375,7 @@
                 populateKeySignaturePanel();
                 updateVerticalRollMenuCheck();
                 updateMidiKeyboardMonitorMenuCheck();
+                updateSequencerFocusMenuCheck();
                 updateKeySignatureMenuChecks();
             }
         });
@@ -1379,6 +1386,7 @@
                 populateKeySignaturePanel();
                 updateVerticalRollMenuCheck();
                 updateMidiKeyboardMonitorMenuCheck();
+                updateSequencerFocusMenuCheck();
                 updateKeySignatureMenuChecks();
             }
         });
@@ -1882,6 +1890,78 @@
     const MIDI_KEYBOARD_MONITOR_STORAGE_KEY = 'pulsepro-midi-keyboard-monitor';
     let _layoutSavedScrollYForVertical = null;
 
+    function getPulseProFullscreenElement() {
+        return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+    }
+
+    function requestSequencerFullscreen() {
+        const root = document.documentElement;
+        const req = root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen;
+        if (!req) return Promise.reject(new Error('Fullscreen API unavailable'));
+        return Promise.resolve(req.call(root));
+    }
+
+    function exitSequencerFullscreen() {
+        const el = getPulseProFullscreenElement();
+        if (!el) return Promise.resolve();
+        const ex = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (!ex) return Promise.resolve();
+        return Promise.resolve(ex.call(document));
+    }
+
+    function syncSequencerFocusAfterBrowserFullscreenExit() {
+        if (getPulseProFullscreenElement()) return;
+        if (!state.sequencerFocusMode) return;
+        state.sequencerFocusMode = false;
+        document.body.classList.remove('sequencer-focus-mode');
+        if (typeof resizeCanvases === 'function') resizeCanvases();
+        if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+        if (typeof window.pulseProSyncAeExpandButtonVisibility === 'function') {
+            window.pulseProSyncAeExpandButtonVisibility();
+        }
+        updateSequencerFocusMenuCheck();
+        renderAll();
+    }
+
+    ['fullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange'].forEach(function(ev) {
+        document.addEventListener(ev, syncSequencerFocusAfterBrowserFullscreenExit);
+    });
+
+    function setSequencerFocusMode(on) {
+        const next = !!on;
+        if (next === !!state.sequencerFocusMode) {
+            updateSequencerFocusMenuCheck();
+            return;
+        }
+        state.sequencerFocusMode = next;
+        document.body.classList.toggle('sequencer-focus-mode', next);
+        if (next && typeof window.aeSetAutomationEditorExpanded === 'function') {
+            window.aeSetAutomationEditorExpanded(false);
+        }
+        if (typeof resizeCanvases === 'function') resizeCanvases();
+        if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+        if (typeof window.pulseProSyncAeExpandButtonVisibility === 'function') {
+            window.pulseProSyncAeExpandButtonVisibility();
+        }
+        updateSequencerFocusMenuCheck();
+        renderAll();
+        if (next) {
+            requestSequencerFullscreen().then(function() {
+                if (!state.sequencerFocusMode) return;
+                if (typeof resizeCanvases === 'function') resizeCanvases();
+                if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+                renderAll();
+            }).catch(function() { /* user denied, iframe, or unsupported */ });
+        } else {
+            exitSequencerFullscreen().then(function() {
+                if (typeof resizeCanvases === 'function') resizeCanvases();
+                if (typeof clampScrollToViewport === 'function') clampScrollToViewport();
+                renderAll();
+            }).catch(function() { /* not in fullscreen */ });
+        }
+    }
+    window.setSequencerFocusMode = setSequencerFocusMode;
+
     function applySequencerLayoutClass() {
         const seq = document.getElementById('sequencer-container');
         if (seq) seq.classList.toggle('layout-vertical', !!state.verticalPianoRoll);
@@ -1941,6 +2021,15 @@
         btnViewVerticalRoll.addEventListener('click', function() {
             blurIfActive(this);
             setVerticalPianoRoll(!state.verticalPianoRoll);
+        });
+    }
+
+    const btnViewSequencerFocus = document.getElementById('btn-view-sequencer-focus');
+    if (btnViewSequencerFocus) {
+        btnViewSequencerFocus.addEventListener('click', function() {
+            blurIfActive(this);
+            setSequencerFocusMode(!state.sequencerFocusMode);
+            closeAllDropdowns();
         });
     }
 
